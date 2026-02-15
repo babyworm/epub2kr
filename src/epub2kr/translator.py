@@ -60,12 +60,12 @@ def validate_lang_code(code: str) -> str:
     if code_lower in LANG_CORRECTIONS:
         correct = LANG_CORRECTIONS[code_lower]
         raise ValueError(
-            f"'{code}'는 국가 코드입니다. 언어 코드 '{correct}' ({LANG_NAMES[correct]})을 사용하세요."
+            f"'{code}' is a country code. Use language code '{correct}' ({LANG_NAMES[correct]}) instead."
         )
     # Unknown code
     raise ValueError(
-        f"지원하지 않는 언어 코드: '{code}'. "
-        f"지원 언어: {', '.join(sorted(k for k in SUPPORTED_LANGS if k != 'auto'))}"
+        f"Unsupported language code: '{code}'. "
+        f"Supported: {', '.join(sorted(k for k in SUPPORTED_LANGS if k != 'auto'))}"
     )
 
 
