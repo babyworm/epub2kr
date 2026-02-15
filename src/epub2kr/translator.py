@@ -12,6 +12,20 @@ from .cache import TranslationCache
 from .services import get_service
 from .services.base import BaseTranslationService
 
+LANG_NAMES = {
+    'auto': 'Auto Detect', 'ko': 'Korean', 'en': 'English', 'zh': 'Chinese',
+    'ja': 'Japanese', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+    'ru': 'Russian', 'pt': 'Portuguese', 'it': 'Italian', 'vi': 'Vietnamese',
+    'th': 'Thai', 'ar': 'Arabic', 'hi': 'Hindi', 'id': 'Indonesian',
+}
+
+
+def lang_label(code: str) -> str:
+    """Return 'code (Name)' if known, otherwise just code."""
+    name = LANG_NAMES.get(code)
+    return f"{code} ({name})" if name else code
+
+
 # CJK languages that benefit from adjusted font/line-height
 CJK_LANGS = {'ko', 'ja', 'zh', 'zh-cn', 'zh-tw'}
 
@@ -99,7 +113,7 @@ class EpubTranslator:
         total_docs = len(content_docs)
 
         self.console.print(f"[cyan]Found {total_docs} content documents[/cyan]")
-        self.console.print(f"[cyan]Translation:[/cyan] {self.source_lang} → {self.target_lang}")
+        self.console.print(f"[cyan]Translation:[/cyan] {lang_label(self.source_lang)} → {lang_label(self.target_lang)}")
         self.console.print(f"[cyan]Service:[/cyan] {self.service.__class__.__name__}")
         self.console.print(f"[cyan]Threads:[/cyan] {self.threads}")
         self.console.print(f"[cyan]Cache:[/cyan] {'enabled' if self.cache else 'disabled'}")

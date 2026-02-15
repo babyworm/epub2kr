@@ -3,11 +3,11 @@ import click
 from rich.console import Console
 from pathlib import Path
 
-from .translator import EpubTranslator
+from .translator import EpubTranslator, lang_label
 from .config import load_config
 
 
-@click.command()
+@click.command(context_settings=dict(help_option_names=['-h', '--help']))
 @click.argument('input_file', type=click.Path(exists=True), required=False, default=None)
 @click.option('-o', '--output', type=click.Path(), default=None, help='Output file path')
 @click.option('-s', '--service', type=click.Choice(['google', 'deepl', 'openai', 'ollama']), default=None, help='Translation service')
@@ -26,18 +26,19 @@ from .config import load_config
 def main(input_file, output, service, source_lang, target_lang, threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
+    \b
+    Language codes:
+      ko: Korean,  en: English, zh: Chinese, ja: Japanese,
+      es: Spanish, fr: French,  de: German,  ru: Russian,
+      pt: Portuguese, it: Italian, vi: Vietnamese, th: Thai
+
+    \b
     Example usage:
-
         epub2kr book.epub -lo zh
-
         epub2kr book.epub -s deepl -lo ja --api-key YOUR_KEY
-
         epub2kr book.epub -s ollama --model llama2 -lo ko
-
         epub2kr book.epub -s openai --model gpt-4 --api-key sk-xxx -lo es
-
         epub2kr book.epub --bilingual -lo zh
-
         epub2kr --setup
     """
     console = Console()
@@ -104,7 +105,7 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         console.print(f"  Input:  {input_file}")
         console.print(f"  Output: {output_path}")
         console.print(f"  Service: {service}")
-        console.print(f"  Language: {source_lang} → {target_lang}")
+        console.print(f"  Language: {lang_label(source_lang)} → {lang_label(target_lang)}")
         console.print(f"  Cache: {'disabled' if no_cache else 'enabled'}")
         if bilingual:
             console.print(f"  Mode: Bilingual")
