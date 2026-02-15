@@ -14,16 +14,59 @@ from .services.base import BaseTranslationService
 
 LANG_NAMES = {
     'auto': 'Auto Detect', 'ko': 'Korean', 'en': 'English', 'zh': 'Chinese',
+    'zh-cn': 'Chinese (Simplified)', 'zh-tw': 'Chinese (Traditional)',
     'ja': 'Japanese', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
     'ru': 'Russian', 'pt': 'Portuguese', 'it': 'Italian', 'vi': 'Vietnamese',
     'th': 'Thai', 'ar': 'Arabic', 'hi': 'Hindi', 'id': 'Indonesian',
+    'nl': 'Dutch', 'pl': 'Polish', 'tr': 'Turkish', 'uk': 'Ukrainian',
+    'sv': 'Swedish', 'cs': 'Czech', 'da': 'Danish', 'fi': 'Finnish',
+    'el': 'Greek', 'hu': 'Hungarian', 'no': 'Norwegian', 'ro': 'Romanian',
+    'bg': 'Bulgarian', 'hr': 'Croatian', 'sk': 'Slovak', 'sl': 'Slovenian',
+    'lt': 'Lithuanian', 'lv': 'Latvian', 'et': 'Estonian',
+    'ms': 'Malay', 'tl': 'Filipino', 'bn': 'Bengali', 'ta': 'Tamil',
+    'te': 'Telugu', 'mr': 'Marathi', 'ur': 'Urdu', 'fa': 'Persian',
+    'he': 'Hebrew', 'sw': 'Swahili', 'af': 'Afrikaans',
 }
+
+# Common mistakes: country code → correct language code
+LANG_CORRECTIONS = {
+    'kr': 'ko',  # Korea → Korean
+    'jp': 'ja',  # Japan → Japanese
+    'cn': 'zh',  # China → Chinese
+    'tw': 'zh-tw',  # Taiwan → Chinese Traditional
+    'gb': 'en',  # Great Britain → English
+    'us': 'en',  # United States → English
+    'br': 'pt',  # Brazil → Portuguese
+    'mx': 'es',  # Mexico → Spanish
+}
+
+SUPPORTED_LANGS = set(LANG_NAMES.keys())
 
 
 def lang_label(code: str) -> str:
     """Return 'code (Name)' if known, otherwise just code."""
     name = LANG_NAMES.get(code)
     return f"{code} ({name})" if name else code
+
+
+def validate_lang_code(code: str) -> str:
+    """Validate language code and return it, or raise ValueError."""
+    if code == 'auto':
+        return code
+    code_lower = code.lower()
+    if code_lower in SUPPORTED_LANGS:
+        return code_lower
+    # Check common mistakes
+    if code_lower in LANG_CORRECTIONS:
+        correct = LANG_CORRECTIONS[code_lower]
+        raise ValueError(
+            f"'{code}'는 국가 코드입니다. 언어 코드 '{correct}' ({LANG_NAMES[correct]})을 사용하세요."
+        )
+    # Unknown code
+    raise ValueError(
+        f"지원하지 않는 언어 코드: '{code}'. "
+        f"지원 언어: {', '.join(sorted(k for k in SUPPORTED_LANGS if k != 'auto'))}"
+    )
 
 
 # CJK languages that benefit from adjusted font/line-height

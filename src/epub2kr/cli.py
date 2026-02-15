@@ -3,7 +3,7 @@ import click
 from rich.console import Console
 from pathlib import Path
 
-from .translator import EpubTranslator, lang_label
+from .translator import EpubTranslator, lang_label, validate_lang_code
 from .config import load_config
 
 
@@ -66,6 +66,10 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         source_lang = source_lang or cfg["source_lang"]
         target_lang = target_lang or cfg["target_lang"]
         threads = threads or cfg["threads"]
+
+        # Validate language codes
+        source_lang = validate_lang_code(source_lang)
+        target_lang = validate_lang_code(target_lang)
         if bilingual is None:
             bilingual = cfg["bilingual"]
 
