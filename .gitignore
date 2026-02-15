@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.so
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# epub2kr
+outputs/
+*.epub
+
+# Cache
+.epub2kr_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# OMC
+.omc/

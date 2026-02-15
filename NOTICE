@@ -1,0 +1,51 @@
+epub2kr - EPUB Translation Tool with Layout Preservation
+Copyright (C) 2026 epub2kr contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+This project was architecturally inspired by PDFMathTranslate (pdf2zh).
+
+  Project:  PDFMathTranslate
+  URL:      https://github.com/PDFMathTranslate/PDFMathTranslate
+  License:  GNU Affero General Public License v3.0 (AGPL-3.0)
+  Authors:  PDFMathTranslate contributors
+
+  PDFMathTranslate is a PDF document translation tool that preserves
+  formatting, formulas, and layout. epub2kr adapts the same pipeline
+  architecture (parse -> extract -> translate -> reconstruct) for EPUB files.
+
+  NOTE: epub2kr is a clean-room implementation. No source code was copied
+  from PDFMathTranslate. Only the high-level architectural design pattern
+  (pipeline-based document translation with layout preservation, pluggable
+  translation service backends, and caching) was used as reference.
+
+  While AGPL-3.0 copyleft does not legally apply to independent
+  implementations inspired by architectural patterns (copyright protects
+  expression, not ideas), this project voluntarily adopts AGPL-3.0 out of
+  respect for the original project and the open-source community.
+
+================================================================================
+DEPENDENCY LICENSES
+================================================================================
+
+This project uses the following open-source libraries:
+
+  ebooklib      - AGPL-3.0    - https://github.com/aerkalov/ebooklib
+  lxml          - BSD-3       - https://github.com/lxml/lxml
+  Click         - BSD-3       - https://github.com/pallets/click
+  Rich          - MIT         - https://github.com/Textualize/rich
+  Requests      - Apache-2.0  - https://github.com/psf/requests
+  OpenAI Python - Apache-2.0  - https://github.com/openai/openai-python
+  deepl-python  - MIT         - https://github.com/DeepLcom/deepl-python
+  langdetect    - Apache-2.0  - https://github.com/Mimino666/langdetect
+
+NOTE: ebooklib is also licensed under AGPL-3.0, which independently requires
+this project to be distributed under AGPL-3.0 compatible terms when
+distributed as a combined work.
