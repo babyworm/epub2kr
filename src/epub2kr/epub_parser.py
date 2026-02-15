@@ -118,6 +118,47 @@ class EpubParser:
         book.set_language(target_lang)
 
     @staticmethod
+    def translate_metadata(book: epub.EpubBook, translator_func, fields=None) -> dict:
+        """Translate book metadata fields (title, description, subject).
+
+        Args:
+            book: EpubBook object to modify
+            translator_func: Function that takes text and returns translation
+                           Signature: translator_func(text: str) -> str
+            fields: List of DC fields to translate
+                    (default: ['title', 'description', 'subject'])
+
+        Returns:
+            Dict of field -> list of (original, translated) pairs
+        """
+        if fields is None:
+            fields = ['title', 'description', 'subject']
+
+        DC_NS = 'http://purl.org/dc/elements/1.1/'
+        translated = {}
+
+        for field in fields:
+            metadata = book.get_metadata('DC', field)
+            if not metadata:
+                continue
+
+            pairs = []
+            new_entries = []
+            for value, attrs in metadata:
+                if value and value.strip():
+                    new_value = translator_func(value)
+                    pairs.append((value, new_value))
+                    new_entries.append((new_value, attrs))
+                else:
+                    new_entries.append((value, attrs))
+
+            if pairs and DC_NS in book.metadata and field in book.metadata[DC_NS]:
+                book.metadata[DC_NS][field] = new_entries
+                translated[field] = pairs
+
+        return translated
+
+    @staticmethod
     def update_toc_labels(book: epub.EpubBook, translator_func) -> None:
         """
         Translate Table of Contents labels.

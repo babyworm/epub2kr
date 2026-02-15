@@ -99,6 +99,163 @@ class TestEpubParserUpdateMetadataLanguage:
         assert book.get_metadata("DC", "language")[0][0] == "zh"
 
 
+class TestEpubParserTranslateMetadata:
+    """Tests for EpubParser.translate_metadata()."""
+
+    def _make_book_with_metadata(self, title="Test Book", description=None, subject=None, creator=None):
+        """Helper to create a book with various metadata fields."""
+        book = epub.EpubBook()
+        book.set_identifier("meta-test-001")
+        book.set_title(title)
+        book.set_language("zh")
+        if description:
+            book.add_metadata('DC', 'description', description)
+        if subject:
+            book.add_metadata('DC', 'subject', subject)
+        if creator:
+            book.add_author(creator)
+        return book
+
+    def test_translates_title(self):
+        """Test title metadata is translated."""
+        book = self._make_book_with_metadata(title="中文标题")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator)
+
+        assert 'title' in result
+        assert result['title'] == [("中文标题", "[EN]中文标题")]
+        assert book.get_metadata('DC', 'title')[0][0] == "[EN]中文标题"
+
+    def test_translates_description(self):
+        """Test description metadata is translated."""
+        book = self._make_book_with_metadata(description="这是一本关于测试的书")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator)
+
+        assert 'description' in result
+        assert book.get_metadata('DC', 'description')[0][0] == "[EN]这是一本关于测试的书"
+
+    def test_translates_subject(self):
+        """Test subject metadata is translated."""
+        book = self._make_book_with_metadata(subject="计算机科学")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator)
+
+        assert 'subject' in result
+        assert book.get_metadata('DC', 'subject')[0][0] == "[EN]计算机科学"
+
+    def test_translates_all_default_fields(self):
+        """Test all three default fields are translated together."""
+        book = self._make_book_with_metadata(
+            title="中文标题", description="描述", subject="主题"
+        )
+
+        def mock_translator(text):
+            return f"[KO]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator)
+
+        assert len(result) == 3
+        assert book.get_metadata('DC', 'title')[0][0] == "[KO]中文标题"
+        assert book.get_metadata('DC', 'description')[0][0] == "[KO]描述"
+        assert book.get_metadata('DC', 'subject')[0][0] == "[KO]主题"
+
+    def test_skips_missing_fields(self):
+        """Test that missing metadata fields are silently skipped."""
+        book = self._make_book_with_metadata(title="Test")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator)
+
+        # Only title exists, description and subject are missing
+        assert 'title' in result
+        assert 'description' not in result
+        assert 'subject' not in result
+
+    def test_does_not_translate_unlisted_fields(self):
+        """Test that creator/publisher are NOT translated by default."""
+        book = self._make_book_with_metadata(title="Test", creator="张三")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        EpubParser.translate_metadata(book, mock_translator)
+
+        # Creator should remain untouched
+        creators = book.get_metadata('DC', 'creator')
+        assert any("张三" in c[0] for c in creators)
+
+    def test_custom_fields_parameter(self):
+        """Test custom fields list only translates specified fields."""
+        book = self._make_book_with_metadata(title="原始标题", description="原始描述")
+
+        def mock_translator(text):
+            return f"[EN]{text}"
+
+        result = EpubParser.translate_metadata(book, mock_translator, fields=['description'])
+
+        # Only description translated, title untouched
+        assert 'description' in result
+        assert 'title' not in result
+        assert book.get_metadata('DC', 'title')[0][0] == "原始标题"
+        assert book.get_metadata('DC', 'description')[0][0] == "[EN]原始描述"
+
+    def test_preserves_metadata_attributes(self):
+        """Test that metadata attributes are preserved after translation."""
+        book = epub.EpubBook()
+        book.set_identifier("attr-test")
+        book.set_title("Test Title")
+        book.set_language("en")
+
+        # Get original attributes
+        orig_attrs = book.get_metadata('DC', 'title')[0][1]
+
+        def mock_translator(text):
+            return f"[KO]{text}"
+
+        EpubParser.translate_metadata(book, mock_translator)
+
+        # Attributes should be preserved
+        new_attrs = book.get_metadata('DC', 'title')[0][1]
+        assert new_attrs == orig_attrs
+
+    def test_roundtrip_save_reload(self, tmp_path):
+        """Test translated metadata survives save/reload cycle."""
+        book = self._make_book_with_metadata(title="原始标题", description="书籍描述")
+
+        ch1 = epub.EpubHtml(title="Ch1", file_name="ch1.xhtml", uid="ch1")
+        ch1.set_content(b"<html><body><p>Content</p></body></html>")
+        book.add_item(ch1)
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = ["nav", "ch1"]
+        book.toc = [epub.Link("ch1.xhtml", "Ch1", uid="ch1_link")]
+
+        def mock_translator(text):
+            return f"[KO]{text}"
+
+        EpubParser.translate_metadata(book, mock_translator)
+
+        # Save and reload
+        path = tmp_path / "meta_test.epub"
+        EpubParser.save(book, str(path))
+        reloaded = EpubParser.load(str(path))
+
+        assert reloaded.get_metadata('DC', 'title')[0][0] == "[KO]原始标题"
+        assert reloaded.get_metadata('DC', 'description')[0][0] == "[KO]书籍描述"
+
+
 class TestEpubParserUpdateTocLabels:
     """Tests for EpubParser.update_toc_labels()."""
 

@@ -83,7 +83,7 @@ pytest tests/ --cov=epub2kr --cov-report=term-missing
 | `tests/test_cache.py` | 24 tests - CRUD, batch, stats, thread safety |
 | `tests/test_config.py` | 10 tests - load/save, defaults, error handling |
 | `tests/test_services.py` | 33 tests - factory, all 4 backends |
-| `tests/test_epub_parser.py` | 12 tests - load/save, metadata, TOC |
+| `tests/test_epub_parser.py` | 21 tests - load/save, metadata translation, TOC |
 | `tests/test_translator.py` | 21 tests - pipeline, cache, bilingual, CJK |
 | `tests/test_integration.py` | 20 tests - CLI (11) + E2E pipeline (9) |
 

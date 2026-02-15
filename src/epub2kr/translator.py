@@ -208,39 +208,43 @@ class EpubTranslator:
             self.console.print("[cyan]Adding CJK font stylesheet...[/cyan]")
             self._add_cjk_stylesheet(book, content_docs)
 
+        # Helper: translate a single short text (used for metadata + TOC)
+        def translate_single(text: str) -> str:
+            """Translate a single short text string."""
+            if not text or not text.strip():
+                return text
+
+            if self.cache:
+                cached = self.cache.get(text, self.source_lang, self.target_lang, self.service.__class__.__name__)
+                if cached:
+                    return cached
+
+            try:
+                translations = self.service.translate([text], self.source_lang, self.target_lang)
+                translated = translations[0] if translations else text
+
+                if self.cache:
+                    self.cache.put(text, translated, self.source_lang, self.target_lang, self.service.__class__.__name__)
+
+                return translated
+            except Exception as e:
+                self.console.print(f"[yellow]Warning: Failed to translate '{text}': {e}[/yellow]")
+                return text
+
+        # Translate metadata (title, description, subject)
+        self.console.print("[cyan]Translating book metadata...[/cyan]")
+        translated_meta = self.parser.translate_metadata(book, translate_single)
+        for field, pairs in translated_meta.items():
+            for original, translated in pairs:
+                self.console.print(f"  [dim]{field}:[/dim] {original} → {translated}")
+
         # Update metadata language
         self.console.print("[cyan]Updating metadata language...[/cyan]")
         self.parser.update_metadata_language(book, self.target_lang)
 
         # Translate TOC labels
         self.console.print("[cyan]Translating table of contents...[/cyan]")
-
-        def translate_toc_label(label: str) -> str:
-            """Translate a single TOC label."""
-            if not label or not label.strip():
-                return label
-
-            # Use cache if available
-            if self.cache:
-                cached = self.cache.get(label, self.source_lang, self.target_lang, self.service.__class__.__name__)
-                if cached:
-                    return cached
-
-            # Translate
-            try:
-                translations = self.service.translate([label], self.source_lang, self.target_lang)
-                translated = translations[0] if translations else label
-
-                # Store in cache
-                if self.cache:
-                    self.cache.put(label, translated, self.source_lang, self.target_lang, self.service.__class__.__name__)
-
-                return translated
-            except Exception as e:
-                self.console.print(f"[yellow]Warning: Failed to translate TOC label '{label}': {e}[/yellow]")
-                return label
-
-        self.parser.update_toc_labels(book, translate_toc_label)
+        self.parser.update_toc_labels(book, translate_single)
 
         # Save output EPUB
         self.console.print(f"[cyan]Saving translated EPUB to:[/cyan] {output_path}")
