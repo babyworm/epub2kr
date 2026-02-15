@@ -3,7 +3,7 @@ import click
 from rich.console import Console
 from pathlib import Path
 
-from .translator import EpubTranslator, lang_label, validate_lang_code
+from .translator import EpubTranslator, lang_label, validate_lang_code, CJK_LANGS, CJK_FONT_STACKS
 from .config import load_config
 
 
@@ -113,6 +113,9 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         console.print(f"  Cache: {'disabled' if no_cache else 'enabled'}")
         if bilingual:
             console.print(f"  Mode: Bilingual")
+        if target_lang.lower() in CJK_LANGS:
+            resolved_font = effective_font_family or CJK_FONT_STACKS.get(target_lang.lower(), CJK_FONT_STACKS.get('ko'))
+            console.print(f"  Style: font={effective_font_size}, line-height={effective_line_height}, family={resolved_font}")
         console.print()
         console.print("[bold green]✓ Done![/bold green]")
 

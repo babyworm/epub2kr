@@ -24,6 +24,7 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.1"]
 
 [project.scripts]
 epub2kr = "epub2kr.cli:main"
+epub2kr-restyle = "epub2kr.restyle:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
