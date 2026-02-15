@@ -96,6 +96,8 @@ class EpubTranslator:
         font_size: str = "0.95em",
         line_height: str = "1.8",
         font_family: Optional[str] = None,
+        heading_font_family: Optional[str] = None,
+        paragraph_spacing: str = "0.5em",
         **service_kwargs
     ):
         """Initialize the EPUB translator.
@@ -110,6 +112,8 @@ class EpubTranslator:
             font_size: CSS font-size for CJK output (e.g. '0.95em', '14px')
             line_height: CSS line-height for CJK output (e.g. '1.8', '2.0')
             font_family: CSS font-family override (None = auto-detect by language)
+            heading_font_family: CSS font-family for headings (None = same as body)
+            paragraph_spacing: CSS margin-bottom for paragraphs (e.g. '0.5em')
             **service_kwargs: Additional arguments for translation service
         """
         self.service = get_service(service_name, **service_kwargs)
@@ -121,6 +125,8 @@ class EpubTranslator:
         self.font_size = font_size
         self.line_height = line_height
         self.font_family = font_family
+        self.heading_font_family = heading_font_family
+        self.paragraph_spacing = paragraph_spacing
         self.extractor = TextExtractor()
         self.parser = EpubParser()
         self.console = Console()
@@ -303,7 +309,16 @@ class EpubTranslator:
             f'  font-size: {self.font_size};\n'
             f'  line-height: {self.line_height};\n'
             f'}}\n'
+            f'p {{\n'
+            f'  margin-bottom: {self.paragraph_spacing};\n'
+            f'}}\n'
         )
+        if self.heading_font_family:
+            css_content += (
+                f'h1, h2, h3, h4, h5, h6 {{\n'
+                f'  font-family: {self.heading_font_family};\n'
+                f'}}\n'
+            )
 
         css_item = epub.EpubItem(
             uid='style_cjk',

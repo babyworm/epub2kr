@@ -22,8 +22,10 @@ from .config import load_config
 @click.option('--font-size', default=None, help='CJK font size (e.g. 0.95em, 14px)')
 @click.option('--line-height', default=None, help='CJK line height (e.g. 1.8, 2.0)')
 @click.option('--font-family', default=None, help='CJK font family (auto-detect if not set)')
+@click.option('--heading-font', default=None, help='Heading font family (defaults to body font)')
+@click.option('--paragraph-spacing', default=None, help='Paragraph spacing (e.g. 0.5em, 1em)')
 @click.option('--setup', is_flag=True, help='Run interactive setup wizard')
-def main(input_file, output, service, source_lang, target_lang, threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, setup):
+def main(input_file, output, service, source_lang, target_lang, threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
     \b
@@ -85,6 +87,8 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         effective_font_size = font_size or cfg.get("font_size", "0.95em")
         effective_line_height = line_height or cfg.get("line_height", "1.8")
         effective_font_family = font_family or cfg.get("font_family")
+        effective_heading_font = heading_font or cfg.get("heading_font_family")
+        effective_paragraph_spacing = paragraph_spacing or cfg.get("paragraph_spacing", "0.5em")
 
         # Create translator
         translator = EpubTranslator(
@@ -97,6 +101,8 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
             font_size=effective_font_size,
             line_height=effective_line_height,
             font_family=effective_font_family,
+            heading_font_family=effective_heading_font,
+            paragraph_spacing=effective_paragraph_spacing,
             **service_kwargs
         )
 
@@ -115,7 +121,10 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
             console.print(f"  Mode: Bilingual")
         if target_lang.lower() in CJK_LANGS:
             resolved_font = effective_font_family or CJK_FONT_STACKS.get(target_lang.lower(), CJK_FONT_STACKS.get('ko'))
-            console.print(f"  Style: font={effective_font_size}, line-height={effective_line_height}, family={resolved_font}")
+            console.print(f"  Body:  font={effective_font_size}, line-height={effective_line_height}, spacing={effective_paragraph_spacing}")
+            console.print(f"  Font:  {resolved_font}")
+            if effective_heading_font:
+                console.print(f"  Heading: {effective_heading_font}")
         console.print()
         console.print("[bold green]✓ Done![/bold green]")
 

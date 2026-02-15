@@ -16,6 +16,8 @@ DEFAULTS = {
     "font_size": "0.95em",
     "line_height": "1.8",
     "font_family": None,  # None = auto-detect by target language
+    "heading_font_family": None,  # None = same as body font
+    "paragraph_spacing": "0.5em",
 }
 
 
@@ -113,6 +115,18 @@ def run_setup():
     )
     font_family = font_family_input if font_family_input else None
 
+    heading_font_default = current.get("heading_font_family") or ""
+    heading_font_input = Prompt.ask(
+        "Heading font family (leave empty to use body font)",
+        default=heading_font_default,
+    )
+    heading_font_family = heading_font_input if heading_font_input else None
+
+    paragraph_spacing = Prompt.ask(
+        "Paragraph spacing (e.g. 0.5em, 1em, 10px)",
+        default=current.get("paragraph_spacing", "0.5em"),
+    )
+
     # Save
     new_config = {
         "service": service,
@@ -124,6 +138,8 @@ def run_setup():
         "font_size": font_size,
         "line_height": line_height,
         "font_family": font_family,
+        "heading_font_family": heading_font_family,
+        "paragraph_spacing": paragraph_spacing,
     }
     save_config(new_config)
 

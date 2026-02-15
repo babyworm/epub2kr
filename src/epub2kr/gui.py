@@ -64,7 +64,10 @@ def _extract_body_html(xhtml_content: bytes) -> str:
 
 def _get_current_css(book) -> dict:
     """Parse current CJK CSS settings from EPUB if present."""
-    settings = {'font_size': '0.95em', 'line_height': '1.8', 'font_family': ''}
+    settings = {
+        'font_size': '0.95em', 'line_height': '1.8', 'font_family': '',
+        'heading_font_family': '', 'paragraph_spacing': '0.5em',
+    }
     for item in book.get_items():
         if item.get_name() == 'style/cjk.css':
             css = item.get_content().decode('utf-8', errors='replace')
@@ -74,9 +77,18 @@ def _get_current_css(book) -> dict:
             m = re.search(r'line-height:\s*([^;]+);', css)
             if m:
                 settings['line_height'] = m.group(1).strip()
-            m = re.search(r'font-family:\s*([^;]+);', css)
+            # Body font-family (first match in body block)
+            m = re.search(r'body\s*\{[^}]*font-family:\s*([^;]+);', css, re.DOTALL)
             if m:
                 settings['font_family'] = m.group(1).strip()
+            # Paragraph spacing
+            m = re.search(r'p\s*\{[^}]*margin-bottom:\s*([^;]+);', css, re.DOTALL)
+            if m:
+                settings['paragraph_spacing'] = m.group(1).strip()
+            # Heading font-family
+            m = re.search(r'h[1-6][^{]*\{[^}]*font-family:\s*([^;]+);', css, re.DOTALL)
+            if m:
+                settings['heading_font_family'] = m.group(1).strip()
             break
     return settings
 
@@ -241,8 +253,22 @@ select:focus, input[type="text"]:focus { border-color: #38bdf8; }
     </div>
 
     <div class="control-group">
-        <label>Font Family Preset</label>
+        <label>Paragraph Spacing</label>
+        <div class="value-row">
+            <span class="value-display" id="spacing-value">0.5</span>
+            <span class="value-unit">em</span>
+        </div>
+        <input type="range" id="paragraph-spacing" min="0" max="2.0" step="0.1" value="0.5">
+    </div>
+
+    <div class="control-group">
+        <label>Body Font</label>
         <select id="font-family"></select>
+    </div>
+
+    <div class="control-group">
+        <label>Heading Font</label>
+        <select id="heading-font"></select>
     </div>
 
     <div class="control-group">
@@ -270,10 +296,13 @@ const FONT_STACKS = __FONT_STACKS_JSON__;
 const preview = document.getElementById('preview');
 const sizeSlider = document.getElementById('font-size');
 const heightSlider = document.getElementById('line-height');
+const spacingSlider = document.getElementById('paragraph-spacing');
 const familySelect = document.getElementById('font-family');
+const headingSelect = document.getElementById('heading-font');
 const customFont = document.getElementById('custom-font');
 const sizeValue = document.getElementById('size-value');
 const heightValue = document.getElementById('height-value');
+const spacingValue = document.getElementById('spacing-value');
 
 // Insert sample content
 preview.innerHTML = __CONTENT_JSON__;
@@ -288,6 +317,11 @@ const heightMatch = CONFIG.line_height.match(/([\d.]+)/);
 if (heightMatch) {
     const v = Math.min(3.0, Math.max(1.0, parseFloat(heightMatch[1])));
     heightSlider.value = v;
+}
+const spacingMatch = CONFIG.paragraph_spacing.match(/([\d.]+)/);
+if (spacingMatch) {
+    const v = Math.min(2.0, Math.max(0, parseFloat(spacingMatch[1])));
+    spacingSlider.value = v;
 }
 
 // Populate font family dropdown with language-specific presets
@@ -307,6 +341,18 @@ langPresets.forEach(p => {
     familySelect.appendChild(opt);
 });
 
+// Populate heading font dropdown (same presets + "Same as body" default)
+const headAutoOpt = document.createElement('option');
+headAutoOpt.value = '';
+headAutoOpt.textContent = 'Same as body font';
+headingSelect.appendChild(headAutoOpt);
+langPresets.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.value;
+    opt.textContent = p.label;
+    headingSelect.appendChild(opt);
+});
+
 // Select current font family
 if (CONFIG.font_family) {
     let found = false;
@@ -314,6 +360,12 @@ if (CONFIG.font_family) {
         if (opt.value === CONFIG.font_family) { opt.selected = true; found = true; break; }
     }
     if (!found) customFont.value = CONFIG.font_family;
+}
+// Select current heading font
+if (CONFIG.heading_font_family) {
+    for (const opt of headingSelect.options) {
+        if (opt.value === CONFIG.heading_font_family) { opt.selected = true; break; }
+    }
 }
 
 function getActiveFamily() {
@@ -325,19 +377,29 @@ function getActiveFamily() {
 function updatePreview() {
     const size = parseFloat(sizeSlider.value);
     const height = parseFloat(heightSlider.value);
+    const spacing = parseFloat(spacingSlider.value);
     const family = getActiveFamily();
+    const headingFamily = headingSelect.value || family;
 
     preview.style.fontFamily = family;
     preview.style.fontSize = size + 'em';
     preview.style.lineHeight = String(height);
 
+    // Apply paragraph spacing to all p elements in preview
+    preview.querySelectorAll('p').forEach(p => { p.style.marginBottom = spacing + 'em'; });
+    // Apply heading font to all headings in preview
+    preview.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => { h.style.fontFamily = headingFamily; });
+
     sizeValue.textContent = size.toFixed(2);
     heightValue.textContent = height.toFixed(1);
+    spacingValue.textContent = spacing.toFixed(1);
 }
 
 sizeSlider.addEventListener('input', updatePreview);
 heightSlider.addEventListener('input', updatePreview);
+spacingSlider.addEventListener('input', updatePreview);
 familySelect.addEventListener('change', () => { customFont.value = ''; updatePreview(); });
+headingSelect.addEventListener('change', updatePreview);
 customFont.addEventListener('input', updatePreview);
 
 updatePreview();
@@ -346,7 +408,9 @@ async function applySettings() {
     const settings = {
         font_size: parseFloat(sizeSlider.value).toFixed(2) + 'em',
         line_height: parseFloat(heightSlider.value).toFixed(1),
+        paragraph_spacing: parseFloat(spacingSlider.value).toFixed(1) + 'em',
         font_family: customFont.value.trim() || familySelect.value || null,
+        heading_font_family: headingSelect.value || null,
     };
     document.getElementById('btn-apply').disabled = true;
     document.getElementById('btn-cancel').disabled = true;

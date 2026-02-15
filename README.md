@@ -82,26 +82,46 @@ epub2kr book.epub -li zh -lo en
 
 ### 폰트/줄간 설정 (CJK)
 
-한국어, 일본어, 중국어로 번역할 때 폰트와 줄간을 조정할 수 있습니다.
+한국어, 일본어, 중국어로 번역할 때 폰트, 줄간, 문단 간격, 제목 폰트를 조정할 수 있습니다.
 
 ```bash
-# 기본값 사용 (Noto Sans KR, 0.95em, 줄간 1.8)
+# 기본값 사용 (Noto Sans KR, 0.95em, 줄간 1.8, 문단간격 0.5em)
 epub2kr book.epub -lo ko
 
-# 폰트 크기 변경
-epub2kr book.epub -lo ko --font-size 14px
-
-# 줄간 변경
-epub2kr book.epub -lo ko --line-height 2.0
+# 폰트 크기/줄간 변경
+epub2kr book.epub -lo ko --font-size 14px --line-height 2.0
 
 # 커스텀 폰트 지정
 epub2kr book.epub -lo ko --font-family '"NanumGothic", "Malgun Gothic", sans-serif'
 
-# 모두 조합
-epub2kr book.epub -lo ko --font-size 0.9em --line-height 2.0 --font-family '"NanumGothic", sans-serif'
+# 제목 폰트를 별도로 지정 (본문: 고딕, 제목: 명조)
+epub2kr book.epub -lo ko --heading-font '"Noto Serif KR", serif'
+
+# 문단 간격 조정
+epub2kr book.epub -lo ko --paragraph-spacing 1em
 ```
 
 `epub2kr --setup`에서도 이 값들을 기본값으로 저장할 수 있습니다.
+
+### 스타일 리스타일링 (epub2kr-restyle)
+
+이미 번역된 EPUB의 폰트/줄간만 다시 조정할 때 사용합니다. 번역 없이 스타일만 변경합니다.
+
+```bash
+# 기본 사용 (새 파일로 저장: *.restyled.epub)
+epub2kr-restyle book.ko.epub --font-size 1em --line-height 2.0
+
+# 원본 덮어쓰기
+epub2kr-restyle book.ko.epub --inplace --line-height 1.6
+
+# 제목 폰트 + 문단 간격 조정
+epub2kr-restyle book.ko.epub --heading-font '"Noto Serif KR", serif' --paragraph-spacing 1em
+
+# 브라우저 GUI로 실시간 미리보기
+epub2kr-restyle book.ko.epub --gui
+```
+
+`--gui` 옵션을 사용하면 브라우저에서 실시간으로 폰트, 줄간, 문단 간격을 조정하면서 미리보기를 확인할 수 있습니다.
 
 ## CLI 옵션
 
@@ -120,7 +140,9 @@ epub2kr book.epub -lo ko --font-size 0.9em --line-height 2.0 --font-family '"Nan
 | `--base-url` | 커스텀 API 베이스 URL | - |
 | `--font-size` | CJK 폰트 크기 (예: `0.95em`, `14px`) | `0.95em` |
 | `--line-height` | CJK 줄간 (예: `1.8`, `2.0`) | `1.8` |
-| `--font-family` | CJK 폰트 (미지정 시 언어별 자동 선택) | 자동 |
+| `--font-family` | CJK 본문 폰트 (미지정 시 언어별 자동 선택) | 자동 |
+| `--heading-font` | CJK 제목 폰트 (미지정 시 본문과 동일) | 본문 동일 |
+| `--paragraph-spacing` | 문단 간격 (예: `0.5em`, `1em`) | `0.5em` |
 | `--setup` | 대화형 설정 마법사 실행 | - |
 
 ## 번역 서비스
@@ -142,7 +164,9 @@ epub2kr book.epub -lo ko --font-size 0.9em --line-height 2.0 --font-family '"Nan
 |------|--------|------|
 | 폰트 크기 | `0.95em` | 원문 대비 약 5% 축소 |
 | 줄간 | `1.8` | CJK 가독성 최적화 |
-| 폰트 | 언어별 자동 선택 | 아래 표 참고 |
+| 문단 간격 | `0.5em` | `<p>` 태그 하단 마진 |
+| 본문 폰트 | 언어별 자동 선택 | 아래 표 참고 |
+| 제목 폰트 | 본문과 동일 | 별도 지정 시 `h1`~`h6`에 적용 |
 
 ### 언어별 기본 폰트 스택
 
@@ -157,15 +181,19 @@ epub2kr book.epub -lo ko --font-size 0.9em --line-height 2.0 --font-family '"Nan
 
 세 가지 방법으로 변경 가능:
 
-1. **CLI 옵션**: `--font-size`, `--line-height`, `--font-family`
+1. **CLI 옵션**: `--font-size`, `--line-height`, `--font-family`, `--heading-font`, `--paragraph-spacing`
 2. **설정 마법사**: `epub2kr --setup`에서 CJK Font Settings 섹션
 3. **설정 파일**: `~/.epub2kr/config.json` 직접 편집
+4. **리스타일 도구**: `epub2kr-restyle` — 번역 없이 스타일만 재조정
+5. **GUI 미리보기**: `epub2kr-restyle --gui` — 브라우저에서 실시간 조정
 
 ```json
 {
   "font_size": "0.9em",
   "line_height": "2.0",
-  "font_family": "\"NanumGothic\", \"Malgun Gothic\", sans-serif"
+  "paragraph_spacing": "0.8em",
+  "font_family": "\"NanumGothic\", \"Malgun Gothic\", sans-serif",
+  "heading_font_family": "\"Noto Serif KR\", serif"
 }
 ```
 
@@ -184,6 +212,8 @@ EPUB 리더에 지정한 폰트가 설치되어 있으면 자동으로 적용됩
 src/epub2kr/
 ├── __init__.py          # 패키지 초기화
 ├── cli.py               # Click 기반 CLI 인터페이스
+├── restyle.py           # epub2kr-restyle CLI (스타일 재조정)
+├── gui.py               # 브라우저 기반 restyle 미리보기 GUI
 ├── translator.py        # 번역 파이프라인 오케스트레이터
 ├── epub_parser.py       # EPUB 읽기/쓰기 (ebooklib)
 ├── text_extractor.py    # XHTML 텍스트 추출/교체 (lxml)

@@ -15,6 +15,8 @@ def restyle_epub(
     font_size: str = "0.95em",
     line_height: str = "1.8",
     font_family: str | None = None,
+    heading_font_family: str | None = None,
+    paragraph_spacing: str = "0.5em",
     lang: str | None = None,
 ) -> str:
     """Restyle an EPUB's CJK stylesheet.
@@ -25,6 +27,8 @@ def restyle_epub(
         font_size: CSS font-size value
         line_height: CSS line-height value
         font_family: CSS font-family override (None = auto-detect)
+        heading_font_family: CSS font-family for headings (None = same as body)
+        paragraph_spacing: CSS margin-bottom for paragraphs
         lang: Language code override (None = read from EPUB metadata)
 
     Returns:
@@ -50,7 +54,16 @@ def restyle_epub(
         f'  font-size: {font_size};\n'
         f'  line-height: {line_height};\n'
         f'}}\n'
+        f'p {{\n'
+        f'  margin-bottom: {paragraph_spacing};\n'
+        f'}}\n'
     )
+    if heading_font_family:
+        css_content += (
+            f'h1, h2, h3, h4, h5, h6 {{\n'
+            f'  font-family: {heading_font_family};\n'
+            f'}}\n'
+        )
 
     # Find existing cjk.css and replace, or create new
     existing_css = None
@@ -85,17 +98,19 @@ def restyle_epub(
 @click.option('--inplace', is_flag=True, help='Overwrite input file in place')
 @click.option('--font-size', default='0.95em', help='CSS font size (e.g. 0.95em, 14px, 90%)')
 @click.option('--line-height', default='1.8', help='CSS line height (e.g. 1.8, 2.0)')
-@click.option('--font-family', default=None, help='CSS font family (auto-detect if not set)')
+@click.option('--font-family', default=None, help='Body font family (auto-detect if not set)')
+@click.option('--heading-font', default=None, help='Heading font family (defaults to body font)')
+@click.option('--paragraph-spacing', default='0.5em', help='Paragraph spacing (e.g. 0.5em, 1em)')
 @click.option('--lang', default=None, help='Language code override (auto-detect from EPUB if not set)')
 @click.option('--gui', is_flag=True, help='Open browser GUI for interactive preview')
-def main(input_file, output, inplace, font_size, line_height, font_family, lang, gui):
+def main(input_file, output, inplace, font_size, line_height, font_family, heading_font, paragraph_spacing, lang, gui):
     """epub2kr-restyle - Adjust font and line-height of an existing EPUB.
 
     \b
     Examples:
       epub2kr-restyle book.ko.epub --font-size 1em --line-height 2.0
       epub2kr-restyle book.ko.epub --inplace --font-family "Nanum Gothic"
-      epub2kr-restyle book.ko.epub -o book.restyled.epub --line-height 1.6
+      epub2kr-restyle book.ko.epub --heading-font "Noto Serif KR" --paragraph-spacing 1em
       epub2kr-restyle book.ko.epub --gui
     """
     console = Console()
@@ -112,6 +127,8 @@ def main(input_file, output, inplace, font_size, line_height, font_family, lang,
         font_size = settings.get('font_size', font_size)
         line_height = settings.get('line_height', line_height)
         font_family = settings.get('font_family') or font_family
+        heading_font = settings.get('heading_font_family') or heading_font
+        paragraph_spacing = settings.get('paragraph_spacing', paragraph_spacing)
 
     if inplace and output:
         console.print("[bold red]Error:[/bold red] Cannot use both --inplace and --output")
@@ -133,6 +150,8 @@ def main(input_file, output, inplace, font_size, line_height, font_family, lang,
             font_size=font_size,
             line_height=line_height,
             font_family=font_family,
+            heading_font_family=heading_font,
+            paragraph_spacing=paragraph_spacing,
             lang=lang,
         )
 
@@ -147,8 +166,10 @@ def main(input_file, output, inplace, font_size, line_height, font_family, lang,
         console.print("[bold green]Restyle Summary:[/bold green]")
         console.print(f"  Input:  {input_file}")
         console.print(f"  Output: {result}")
-        console.print(f"  Style:  font={font_size}, line-height={line_height}")
-        console.print(f"  Family: {resolved_font}")
+        console.print(f"  Body:   font={font_size}, line-height={line_height}, spacing={paragraph_spacing}")
+        console.print(f"  Font:   {resolved_font}")
+        if heading_font:
+            console.print(f"  Heading: {heading_font}")
         console.print()
         console.print("[bold green]✓ Done![/bold green]")
 
