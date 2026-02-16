@@ -9,7 +9,7 @@ CONFIG_PATH = Path.home() / ".epub2kr" / "config.json"
 DEFAULTS = {
     "service": "google",
     "source_lang": "auto",
-    "target_lang": "en",
+    "target_lang": "ko",
     "threads": 4,
     "model": None,
     "bilingual": False,
