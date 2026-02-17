@@ -1,10 +1,13 @@
 """CLI interface for epub2kr."""
+import json
 import click
 from rich.console import Console
 from pathlib import Path
 
 from .translator import EpubTranslator, lang_label, validate_lang_code, CJK_LANGS, CJK_FONT_STACKS
 from .config import load_config
+from .cache import TranslationCache
+from .ocr_cache import OCRPrescanCache
 
 
 @click.command(context_settings=dict(help_option_names=['-h', '--help']))
@@ -26,8 +29,16 @@ from .config import load_config
 @click.option('--heading-font', default=None, help='Heading font family (defaults to body font)')
 @click.option('--paragraph-spacing', default=None, help='Paragraph spacing (e.g. 0.5em, 1em)')
 @click.option('--no-translate-images', is_flag=True, help='Skip OCR translation of image text')
+@click.option('--images-only', is_flag=True, help='Only run image OCR/translation (skip chapter text translation)')
+@click.option('--resume', is_flag=True, help='Resume from existing output (image-focused continuation)')
+@click.option('--verbose', is_flag=True, help='Verbose logs')
+@click.option('--quiet', is_flag=True, help='Minimal logs')
+@click.option('--log-json', is_flag=True, help='Print final summary as JSON')
+@click.option('--cache-stats', is_flag=True, help='Show cache stats and exit')
+@click.option('--cache-clear', is_flag=True, help='Clear translation/OCR caches and exit')
+@click.option('--cache-prune-days', default=None, type=int, help='Prune cache entries older than N days and exit')
 @click.option('--setup', is_flag=True, help='Run interactive setup wizard')
-def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, setup):
+def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, images_only, resume, verbose, quiet, log_json, cache_stats, cache_clear, cache_prune_days, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
     \b
@@ -46,12 +57,32 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
         epub2kr book.epub --bilingual -lo zh
         epub2kr --setup
     """
-    console = Console()
+    console = Console(quiet=quiet)
 
     # --setup: run interactive wizard and exit
     if setup:
         from .config import run_setup
         run_setup()
+        return
+
+    # cache management commands
+    if cache_stats or cache_clear or (cache_prune_days is not None):
+        tcache = TranslationCache()
+        ocache = OCRPrescanCache()
+        if cache_clear:
+            tcache.clear()
+            ocache.clear()
+            console.print("[green]Caches cleared.[/green]")
+        if cache_prune_days is not None:
+            deleted_t = tcache.prune(cache_prune_days)
+            deleted_o = ocache.prune(cache_prune_days)
+            console.print(f"[green]Pruned cache entries older than {cache_prune_days} days:[/green] text={deleted_t}, ocr={deleted_o}")
+        if cache_stats:
+            payload = {
+                "translation_cache": tcache.stats(),
+                "ocr_cache": ocache.stats(),
+            }
+            console.print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     # Normal translation mode requires input file
@@ -110,6 +141,10 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
             heading_font_family=effective_heading_font,
             paragraph_spacing=effective_paragraph_spacing,
             translate_images=not no_translate_images,
+            images_only=images_only,
+            resume=resume,
+            verbose=verbose,
+            quiet=quiet,
             **service_kwargs
         )
 
@@ -129,6 +164,10 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
         console.print(f"  Language: {source_display} → {lang_label(target_lang)}")
         console.print(f"  Threads: chapters={threads}, images={image_threads if image_threads is not None else threads}")
         console.print(f"  Cache: {'disabled' if no_cache else 'enabled'}")
+        if images_only:
+            console.print("  Mode: Images-only")
+        if resume:
+            console.print("  Resume: enabled")
         if bilingual:
             console.print(f"  Mode: Bilingual")
         if target_lang.lower() in CJK_LANGS:
@@ -139,6 +178,8 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
                 console.print(f"  Heading: {effective_heading_font}")
         console.print()
         console.print("[bold green]✓ Done![/bold green]")
+        if log_json:
+            console.print(json.dumps(translator.get_last_report(), ensure_ascii=False))
 
     except KeyboardInterrupt:
         console.print("[yellow]Cancelled by user.[/yellow]")

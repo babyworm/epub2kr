@@ -107,7 +107,8 @@ class ImageTranslator:
         Returns:
             Modified image bytes, or None if no text was found
         """
-        img = Image.open(io.BytesIO(image_bytes))
+        with Image.open(io.BytesIO(image_bytes)) as opened:
+            img = opened.copy()
 
         # Skip tiny images
         if img.width < MIN_IMAGE_DIMENSION or img.height < MIN_IMAGE_DIMENSION:
@@ -139,14 +140,17 @@ class ImageTranslator:
         if fmt == 'JPEG' and result.mode == 'RGBA':
             result = result.convert('RGB')
         result.save(output, format=fmt)
-        return output.getvalue()
+        data = output.getvalue()
+        output.close()
+        return data
 
     def detect_regions(self, image_bytes: bytes, media_type: str) -> List[OCRRegion]:
         """Detect OCR regions from image bytes without rendering translations."""
         if media_type not in SUPPORTED_MEDIA_TYPES:
             return []
 
-        img = Image.open(io.BytesIO(image_bytes))
+        with Image.open(io.BytesIO(image_bytes)) as opened:
+            img = opened.copy()
         if img.width < MIN_IMAGE_DIMENSION or img.height < MIN_IMAGE_DIMENSION:
             return []
         if img.mode not in ('RGB', 'RGBA'):
@@ -312,12 +316,12 @@ class ImageTranslator:
                 best_size = min_size
                 break
 
-            bbox = font.getbbox(text)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
+            wrapped = self._wrap_text_to_width(text, font, max_width)
+            text_w, text_h = self._measure_multiline(font, wrapped)
 
             if text_w <= max_width and text_h <= max_height:
                 best_size = mid
+                best_text = wrapped
                 lo = mid + 1
             else:
                 hi = mid - 1
@@ -327,7 +331,67 @@ class ImageTranslator:
         except (OSError, IOError):
             final_font = ImageFont.load_default()
 
-        return final_font, text
+        final_text = self._wrap_text_to_width(text, final_font, max_width)
+        if not final_text.strip():
+            final_text = text
+        return final_font, final_text
+
+    def _measure_multiline(self, font: ImageFont.ImageFont, text: str) -> Tuple[int, int]:
+        lines = text.splitlines() or [text]
+        max_w = 0
+        total_h = 0
+        for line in lines:
+            bbox = font.getbbox(line if line else " ")
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+            max_w = max(max_w, w)
+            total_h += max(h, 1)
+        # Small spacing between lines improves readability
+        if len(lines) > 1:
+            total_h += (len(lines) - 1) * 2
+        return max_w, total_h
+
+    def _wrap_text_to_width(self, text: str, font: ImageFont.ImageFont, max_width: int) -> str:
+        if max_width <= 0:
+            return text
+        if not text.strip():
+            return text
+
+        # Preserve explicit line breaks first.
+        wrapped_lines: List[str] = []
+        for paragraph in text.splitlines():
+            if not paragraph.strip():
+                wrapped_lines.append("")
+                continue
+
+            # Prefer word wrapping for spaced languages.
+            if " " in paragraph:
+                words = paragraph.split()
+                line = words[0]
+                for word in words[1:]:
+                    candidate = f"{line} {word}"
+                    bbox = font.getbbox(candidate)
+                    if (bbox[2] - bbox[0]) <= max_width:
+                        line = candidate
+                    else:
+                        wrapped_lines.append(line)
+                        line = word
+                wrapped_lines.append(line)
+            else:
+                # Character-level wrapping for CJK/no-space scripts.
+                line = ""
+                for ch in paragraph:
+                    candidate = f"{line}{ch}"
+                    bbox = font.getbbox(candidate)
+                    if line and (bbox[2] - bbox[0]) > max_width:
+                        wrapped_lines.append(line)
+                        line = ch
+                    else:
+                        line = candidate
+                if line:
+                    wrapped_lines.append(line)
+
+        return "\n".join(wrapped_lines)
 
     def _find_font(self) -> Optional[str]:
         """Find a suitable system font for the target language."""

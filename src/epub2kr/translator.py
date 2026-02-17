@@ -1,5 +1,6 @@
 """Main EPUB translation orchestrator."""
 import hashlib
+import json
 import os
 import re
 import threading
@@ -113,6 +114,10 @@ class EpubTranslator:
         heading_font_family: Optional[str] = None,
         paragraph_spacing: str = "0.5em",
         translate_images: bool = True,
+        images_only: bool = False,
+        resume: bool = False,
+        verbose: bool = False,
+        quiet: bool = False,
         **service_kwargs
     ):
         """Initialize the EPUB translator.
@@ -131,6 +136,10 @@ class EpubTranslator:
             heading_font_family: CSS font-family for headings (None = same as body)
             paragraph_spacing: CSS margin-bottom for paragraphs (e.g. '0.5em')
             translate_images: Whether to OCR and translate text in images
+            images_only: Only run image OCR/translation pipeline
+            resume: Resume from existing output (image-focused continuation)
+            verbose: Enable verbose logs
+            quiet: Suppress non-essential logs
             **service_kwargs: Additional arguments for translation service
         """
         self.service = get_service(service_name, **service_kwargs)
@@ -145,6 +154,10 @@ class EpubTranslator:
         self.ocr_cache = OCRPrescanCache() if use_cache else None
         self.bilingual = bilingual
         self.translate_images = translate_images
+        self.images_only = images_only
+        self.resume = resume
+        self.verbose = verbose
+        self.quiet = quiet
         self.font_size = font_size
         self.line_height = line_height
         self.font_family = font_family
@@ -152,7 +165,28 @@ class EpubTranslator:
         self.paragraph_spacing = paragraph_spacing
         self.extractor = TextExtractor()
         self.parser = EpubParser()
-        self.console = Console()
+        self.console = Console(quiet=quiet)
+        self._last_report: Dict = {}
+
+    @staticmethod
+    def _resume_path(output_path: str) -> Path:
+        return Path(f"{output_path}.resume.json")
+
+    def _load_resume_checkpoint(self, output_path: str) -> Dict:
+        p = self._resume_path(output_path)
+        if not p.exists():
+            return {}
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save_resume_checkpoint(self, output_path: str, payload: Dict) -> None:
+        p = self._resume_path(output_path)
+        try:
+            p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def translate_epub(self, input_path: str, output_path: Optional[str] = None) -> str:
         """Main entry point: translate an EPUB file.
@@ -177,8 +211,26 @@ class EpubTranslator:
             input_file = Path(input_path)
             output_path = str(input_file.parent / f"{input_file.stem}.{self.target_lang}.epub")
 
-        self.console.print(f"[cyan]Loading EPUB:[/cyan] {input_path}")
-        book = self.parser.load(input_path)
+        total_start = time.perf_counter()
+        load_path = input_path
+        effective_images_only = self.images_only
+        checkpoint = {
+            "chapters_done": False,
+            "images_done": False,
+            "metadata_done": False,
+            "saved_done": False,
+        }
+        if self.resume and output_path:
+            checkpoint.update(self._load_resume_checkpoint(output_path))
+        if self.resume and output_path and Path(output_path).exists() and not effective_images_only:
+            load_path = output_path
+            effective_images_only = True
+            self.console.print(
+                f"[cyan]Resume:[/cyan] existing output detected, continuing with image-only mode from {load_path}"
+            )
+
+        self.console.print(f"[cyan]Loading EPUB:[/cyan] {load_path}")
+        book = self.parser.load(load_path)
 
         # Get all content documents in spine order
         content_docs = self.parser.get_content_documents(book)
@@ -199,12 +251,19 @@ class EpubTranslator:
         self.console.print(f"[cyan]Threads:[/cyan] {self.threads}")
         self.console.print(f"[cyan]Image threads:[/cyan] {self.image_threads}")
         self.console.print(f"[cyan]Cache:[/cyan] {'enabled' if self.cache else 'disabled'}")
+        if effective_images_only:
+            self.console.print("[cyan]Mode:[/cyan] Images-only")
         if self.bilingual:
             self.console.print("[cyan]Mode:[/cyan] Bilingual")
 
         # Translate documents with progress bar
+        chapter_start = time.perf_counter()
         image_prefetch_executor = None
         image_prefetch_future = None
+        image_translate_executor = None
+        image_translate_future = None
+        image_translate_started = False
+        prefetched_regions = None
         prefetch_state = {"total": 0, "completed": 0}
         prefetch_lock = threading.Lock()
         if self.translate_images:
@@ -217,6 +276,29 @@ class EpubTranslator:
                 prefetch_state,
                 prefetch_lock,
             )
+
+        def maybe_start_image_translation():
+            nonlocal image_translate_executor, image_translate_future
+            nonlocal image_translate_started, prefetched_regions
+            if not self.translate_images or image_translate_started:
+                return
+            if image_prefetch_future is None or not image_prefetch_future.done():
+                return
+            if self.source_lang == "auto" and not self._source_lang_locked:
+                return
+
+            prefetched_regions = image_prefetch_future.result()
+            if image_prefetch_executor is not None:
+                image_prefetch_executor.shutdown(wait=False, cancel_futures=False)
+            image_translate_executor = ThreadPoolExecutor(max_workers=1)
+            image_translate_future = image_translate_executor.submit(
+                self._translate_images,
+                book,
+                prefetched_regions,
+                False,
+            )
+            image_translate_started = True
+            self.console.print("[cyan]Pre-scan ready. Starting image translation in background...[/cyan]")
 
         with Progress(
             SpinnerColumn(),
@@ -237,7 +319,7 @@ class EpubTranslator:
                 try:
                     futures = {
                         executor.submit(self._translate_document, item, idx + 1, total_docs): idx
-                        for idx, item in enumerate(content_docs)
+                        for idx, item in enumerate(content_docs) if not effective_images_only
                     }
 
                     for future in as_completed(futures):
@@ -249,6 +331,9 @@ class EpubTranslator:
                         progress.advance(main_task)
                         if prefetch_task is not None:
                             self._update_prefetch_progress(progress, prefetch_task, prefetch_state, prefetch_lock)
+                        maybe_start_image_translation()
+                    if effective_images_only:
+                        progress.update(main_task, completed=total_docs)
                 except KeyboardInterrupt:
                     interrupted = True
                     executor.shutdown(wait=False, cancel_futures=True)
@@ -258,20 +343,30 @@ class EpubTranslator:
                         executor.shutdown(wait=True, cancel_futures=False)
             else:
                 # Sequential translation
-                for idx, item in enumerate(content_docs):
-                    try:
-                        self._translate_document(item, idx + 1, total_docs)
-                    except Exception as e:
-                        self.console.print(f"[red]Error translating document {idx + 1}:[/red] {e}")
-                    progress.advance(main_task)
-                    if prefetch_task is not None:
-                        self._update_prefetch_progress(progress, prefetch_task, prefetch_state, prefetch_lock)
+                if effective_images_only:
+                    progress.update(main_task, completed=total_docs)
+                else:
+                    for idx, item in enumerate(content_docs):
+                        try:
+                            self._translate_document(item, idx + 1, total_docs)
+                        except Exception as e:
+                            self.console.print(f"[red]Error translating document {idx + 1}:[/red] {e}")
+                        progress.advance(main_task)
+                        if prefetch_task is not None:
+                            self._update_prefetch_progress(progress, prefetch_task, prefetch_state, prefetch_lock)
+                        maybe_start_image_translation()
 
             if prefetch_task is not None and image_prefetch_future is not None:
-                while not image_prefetch_future.done():
+                while not image_prefetch_future.done() and not image_translate_started:
                     self._update_prefetch_progress(progress, prefetch_task, prefetch_state, prefetch_lock)
                     time.sleep(0.1)
+                    maybe_start_image_translation()
                 self._update_prefetch_progress(progress, prefetch_task, prefetch_state, prefetch_lock)
+                maybe_start_image_translation()
+        chapter_elapsed = time.perf_counter() - chapter_start
+        if output_path:
+            checkpoint["chapters_done"] = True
+            self._save_resume_checkpoint(output_path, checkpoint)
 
         if self.source_lang == 'auto':
             if not self._source_lang_locked:
@@ -284,28 +379,51 @@ class EpubTranslator:
                 f"{self._source_lang_display()} → {lang_label(self.target_lang)}"
             )
 
+        # If source got locked only after chapter translation, start background image translation now.
+        if self.translate_images and not image_translate_started and image_prefetch_future is not None:
+            if image_prefetch_future.done():
+                maybe_start_image_translation()
+
         # Add CJK stylesheet if targeting CJK language
-        if self.target_lang.lower() in CJK_LANGS:
+        style_start = time.perf_counter()
+        if self.target_lang.lower() in CJK_LANGS and not effective_images_only:
             self.console.print("[cyan]Adding CJK font stylesheet...[/cyan]")
             self._add_cjk_stylesheet(book, content_docs)
+        style_elapsed = time.perf_counter() - style_start
 
         # Image text translation (OCR)
+        images_start = time.perf_counter()
         if self.translate_images:
-            prefetched_regions = {}
-            if image_prefetch_future is not None:
-                try:
-                    prefetched_regions = image_prefetch_future.result()
-                except Exception as e:
-                    self.console.print(f"[yellow]Warning: Image pre-scan failed: {e}[/yellow]")
-                    prefetched_regions = {}
-                finally:
-                    image_prefetch_executor.shutdown(wait=False)
-            self.console.print("[cyan]Scanning images for text (OCR)...[/cyan]")
             self.console.print(f"[cyan]OCR source language:[/cyan] {lang_label(self.effective_source_lang)}")
-            processed, skipped, errors, total = self._translate_images(book, prefetched_regions)
+            if image_translate_started and image_translate_future is not None:
+                self.console.print("[cyan]Waiting for background image translation to finish...[/cyan]")
+                try:
+                    processed, skipped, errors, total = image_translate_future.result()
+                finally:
+                    if image_translate_executor is not None:
+                        image_translate_executor.shutdown(wait=False, cancel_futures=False)
+            else:
+                prefetched_regions = {}
+                if image_prefetch_future is not None:
+                    try:
+                        prefetched_regions = image_prefetch_future.result()
+                    except Exception as e:
+                        self.console.print(f"[yellow]Warning: Image pre-scan failed: {e}[/yellow]")
+                        prefetched_regions = {}
+                    finally:
+                        if image_prefetch_executor is not None:
+                            image_prefetch_executor.shutdown(wait=False, cancel_futures=False)
+                self.console.print("[cyan]Scanning images for text (OCR)...[/cyan]")
+                processed, skipped, errors, total = self._translate_images(book, prefetched_regions, True)
             self.console.print(
                 f"[cyan]Image OCR summary:[/cyan] processed={processed}, skipped={skipped}, errors={errors}, total={total}"
             )
+        else:
+            processed = skipped = errors = total = 0
+        images_elapsed = time.perf_counter() - images_start
+        if output_path:
+            checkpoint["images_done"] = True
+            self._save_resume_checkpoint(output_path, checkpoint)
 
         # Helper: translate a single short text (used for metadata + TOC)
         def translate_single(text: str) -> str:
@@ -342,28 +460,75 @@ class EpubTranslator:
                 return text
 
         # Translate metadata (title, description, subject)
-        self.console.print("[cyan]Translating book metadata...[/cyan]")
-        translated_meta = self.parser.translate_metadata(book, translate_single)
-        for field, pairs in translated_meta.items():
-            for original, translated in pairs:
-                self.console.print(f"  [dim]{field}:[/dim] {original} → {translated}")
+        meta_start = time.perf_counter()
+        if not effective_images_only:
+            self.console.print("[cyan]Translating book metadata...[/cyan]")
+            translated_meta = self.parser.translate_metadata(book, translate_single)
+            for field, pairs in translated_meta.items():
+                for original, translated in pairs:
+                    self.console.print(f"  [dim]{field}:[/dim] {original} → {translated}")
 
-        # Update metadata language
-        self.console.print("[cyan]Updating metadata language...[/cyan]")
-        self.parser.update_metadata_language(book, self.target_lang)
+            # Update metadata language
+            self.console.print("[cyan]Updating metadata language...[/cyan]")
+            self.parser.update_metadata_language(book, self.target_lang)
 
-        # Translate TOC labels
-        self.console.print("[cyan]Translating table of contents...[/cyan]")
-        self.parser.update_toc_labels(book, translate_single)
+            # Translate TOC labels
+            self.console.print("[cyan]Translating table of contents...[/cyan]")
+            self.parser.update_toc_labels(book, translate_single)
+        meta_elapsed = time.perf_counter() - meta_start
+        if output_path:
+            checkpoint["metadata_done"] = True
+            self._save_resume_checkpoint(output_path, checkpoint)
 
         # Save output EPUB
+        save_start = time.perf_counter()
         self.console.print(f"[cyan]Saving translated EPUB to:[/cyan] {output_path}")
         self.parser.save(book, output_path)
+        save_elapsed = time.perf_counter() - save_start
+        if output_path:
+            checkpoint["saved_done"] = True
+            self._save_resume_checkpoint(output_path, checkpoint)
+
+        total_elapsed = time.perf_counter() - total_start
+        perf = {
+            "total_sec": round(total_elapsed, 3),
+            "chapters_sec": round(chapter_elapsed, 3),
+            "images_sec": round(images_elapsed, 3),
+            "metadata_toc_sec": round(meta_elapsed, 3),
+            "styles_sec": round(style_elapsed, 3),
+            "save_sec": round(save_elapsed, 3),
+        }
+        if self.cache:
+            perf["translation_cache"] = self.cache.stats()
+        if self.ocr_cache:
+            perf["ocr_cache"] = self.ocr_cache.stats()
+        self._last_report = {
+            "output_path": output_path,
+            "effective_source_lang": self.effective_source_lang,
+            "target_lang": self.target_lang,
+            "images": {
+                "processed": processed,
+                "skipped": skipped,
+                "errors": errors,
+                "total": total,
+            },
+            "performance": perf,
+        }
+        self.console.print("[cyan]Performance:[/cyan] " + json.dumps(perf, ensure_ascii=False))
 
         self.console.print(f"[green]✓ Translation complete![/green]")
         return output_path
 
-    def _translate_images(self, book, prefetched_regions: Optional[Dict[str, List]] = None) -> tuple[int, int, int, int]:
+    def get_last_report(self) -> Dict:
+        return dict(self._last_report) if self._last_report else {}
+
+    def _translate_images(
+        self,
+        book,
+        prefetched_regions: Optional[Dict[str, List]] = None,
+        show_progress: bool = True,
+        background_log_interval: int = 10,
+    ) -> tuple[int, int, int, int]:
         """Translate text found in images via OCR.
 
         Returns:
@@ -430,21 +595,35 @@ class EpubTranslator:
         if translate_total == 0:
             return (0, skipped, errors, total)
 
-        # Show progress with current/total indicator
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=self.console,
-        ) as progress:
-            task = progress.add_task(
-                f"[green]Translating images 0/{translate_total}...",
-                total=translate_total,
-            )
+        def run_translate_with_progress():
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=self.console,
+            ) as progress:
+                task = progress.add_task(
+                    f"[green]Translating images 0/{translate_total}...",
+                    total=translate_total,
+                )
+                run_translate_core(progress, task)
+
+        def run_translate_core(progress: Optional[Progress], task: Optional[int]):
+            nonlocal processed, skipped, errors
+            completed = 0
+
+            def maybe_log_background_progress(force: bool = False):
+                if show_progress:
+                    return
+                if completed == 0:
+                    return
+                if force or (completed % max(1, background_log_interval) == 0):
+                    self.console.print(
+                        f"[cyan]Background image translation:[/cyan] {completed}/{translate_total}"
+                    )
 
             if self.image_threads > 1:
-                completed = 0
                 executor = ThreadPoolExecutor(max_workers=self.image_threads)
                 interrupted = False
                 try:
@@ -469,11 +648,14 @@ class EpubTranslator:
                             errors += 1
                         finally:
                             completed += 1
-                            progress.update(
-                                task,
-                                advance=1,
-                                description=f"[green]Translating images {completed}/{translate_total}...",
-                            )
+                            if progress is not None and task is not None:
+                                progress.update(
+                                    task,
+                                    advance=1,
+                                    description=f"[green]Translating images {completed}/{translate_total}...",
+                                )
+                            else:
+                                maybe_log_background_progress()
                 except KeyboardInterrupt:
                     interrupted = True
                     executor.shutdown(wait=False, cancel_futures=True)
@@ -496,11 +678,22 @@ class EpubTranslator:
                         )
                         errors += 1
                     finally:
-                        progress.update(
-                            task,
-                            advance=1,
-                            description=f"[green]Translating images {idx}/{translate_total}...",
-                        )
+                        completed += 1
+                        if progress is not None and task is not None:
+                            progress.update(
+                                task,
+                                advance=1,
+                                description=f"[green]Translating images {idx}/{translate_total}...",
+                            )
+                        else:
+                            maybe_log_background_progress()
+
+            maybe_log_background_progress(force=True)
+
+        if show_progress:
+            run_translate_with_progress()
+        else:
+            run_translate_core(None, None)
 
         return (processed, skipped, errors, total)
 

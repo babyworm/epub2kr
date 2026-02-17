@@ -382,6 +382,22 @@ class TranslationCache:
             except sqlite3.DatabaseError:
                 self._recreate_db()
 
+    def prune(self, older_than_days: int) -> int:
+        """Delete cached translations older than N days."""
+        cutoff = int(datetime.now().timestamp()) - (older_than_days * 86400)
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                try:
+                    cur = conn.execute("DELETE FROM translations WHERE timestamp < ?", (cutoff,))
+                    conn.commit()
+                    return cur.rowcount
+                finally:
+                    conn.close()
+            except sqlite3.DatabaseError:
+                self._recreate_db()
+                return 0
+
     def stats(self) -> Dict:
         """Get cache statistics.
 

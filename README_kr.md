@@ -12,6 +12,9 @@ EPUB 파일을 레이아웃을 보존하면서 번역하는 CLI 도구입니다.
 - 한국어/일본어/중국어 번역 시 Noto 폰트 및 가독성 최적화 CSS 자동 적용
 - SQLite 기반 번역 캐시로 중복 번역 방지
 - SQLite 기반 OCR pre-scan 캐시로 재실행 시 OCR 재계산 최소화
+- 이미 번역된 EPUB에 대해 그림만 후처리하는 이미지 전용 모드 지원
+- 재개용 체크포인트(`.resume.json`) 기반 resume 모드 지원
+- 단계별 성능 요약 출력 및 JSON 로그 출력 지원
 - 멀티스레드 병렬 번역으로 빠른 처리
 - 원문+번역문을 함께 보여주는 바이링구얼 모드
 - 목차(TOC) 자동 번역
@@ -84,6 +87,12 @@ epub2kr book.epub -j 4 -lo ko
 # 문서 1스레드 + 이미지 3스레드
 epub2kr book.epub -t 1 -j 3 -lo ko
 
+# 이미지 전용 모드 (본문 번역 스킵)
+epub2kr book.epub --images-only -lo ko -o book.img-only.epub
+
+# 재개 모드 (기존 출력에서 이어서 처리)
+epub2kr book.epub --resume -lo ko -o book.ko.epub
+
 # 이미지 OCR 번역 비활성화
 epub2kr book.epub --no-translate-images -lo ko
 
@@ -92,6 +101,14 @@ epub2kr book.epub --no-cache -lo ko
 
 # 소스 언어 직접 지정 (기본: auto)
 epub2kr book.epub -li zh -lo en
+
+# 최종 리포트를 JSON으로 출력
+epub2kr book.epub -lo ko --log-json
+
+# 캐시 관리
+epub2kr --cache-stats
+epub2kr --cache-clear
+epub2kr --cache-prune-days 30
 ```
 
 `-li auto`일 때는 번역 진행 중 감지된 언어가 로그/요약에 다음처럼 표시됩니다.
@@ -156,6 +173,14 @@ epub2kr-restyle book.ko.epub --gui
 | `-j, --image-threads` | 이미지 OCR/번역 병렬 스레드 수 | `threads`와 동일 |
 | `--no-cache` | 번역 캐시 비활성화 | `false` |
 | `--no-translate-images` | 이미지 OCR 번역 비활성화 | `false` |
+| `--images-only` | 이미지 OCR/번역만 수행 | `false` |
+| `--resume` | 기존 출력에서 재개 | `false` |
+| `--verbose` | 상세 로그 출력 | `false` |
+| `--quiet` | 최소 로그 출력 | `false` |
+| `--log-json` | 최종 리포트 JSON 출력 | `false` |
+| `--cache-stats` | 캐시 통계 출력 후 종료 | `false` |
+| `--cache-clear` | 번역/OCR 캐시 삭제 후 종료 | `false` |
+| `--cache-prune-days` | N일 이전 캐시 정리 후 종료 | - |
 | `--bilingual` | 바이링구얼 출력 생성 | `false` |
 | `--api-key` | 번역 서비스 API 키 | - |
 | `--model` | 모델 이름 (OpenAI/Ollama용) | - |
@@ -233,6 +258,18 @@ EPUB 리더에 지정한 폰트가 설치되어 있으면 자동으로 적용됩
 - 캐시 키: `SHA-256(이미지 bytes) + 소스언어 + 미디어타입 + OCR confidence threshold`
 - pre-scan에서 "번역 대상 없음"으로 판정된 이미지는 본 처리 단계에서 즉시 skip
 - `--no-cache` 사용 시 OCR 캐시도 함께 비활성화
+
+추가 캐시 관리 명령:
+
+- `--cache-stats`: 번역/OCR 캐시 통계 출력 후 종료
+- `--cache-clear`: 번역/OCR 캐시 삭제 후 종료
+- `--cache-prune-days N`: N일 이전 캐시 정리 후 종료
+
+## 리포트 및 벤치마크
+
+- 실행 종료 시 단계별 성능 요약(`chapters/images/metadata/save/total`)이 출력됩니다.
+- `--log-json` 옵션으로 기계 처리 가능한 최종 리포트를 출력할 수 있습니다.
+- 경량 벤치마크 스모크 테스트는 `tests/test_benchmark.py`에 포함되어 있습니다.
 
 ## 프로젝트 구조
 

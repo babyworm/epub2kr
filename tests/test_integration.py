@@ -173,6 +173,28 @@ class TestCLI:
         default_output = minimal_epub.parent / "test.ja.epub"
         assert not default_output.exists()
 
+    def test_resume_option_uses_existing_output(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """Test --resume mode when output file already exists."""
+        runner = CliRunner()
+        output_path = tmp_path / "resume.epub"
+
+        first = runner.invoke(main, [
+            str(minimal_epub),
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+        assert first.exit_code == 0
+        assert output_path.exists()
+
+        second = runner.invoke(main, [
+            str(minimal_epub),
+            '--resume',
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+        assert second.exit_code == 0
+        assert 'Resume: enabled' in second.output
+
     def test_bilingual_flag(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
         """Test --bilingual flag works."""
         runner = CliRunner()
@@ -255,6 +277,75 @@ class TestCLI:
         assert result.exit_code == 0
         assert output_path.exists()
         assert 'chapters=2, images=4' in result.output
+
+    def test_images_only_option(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """Test --images-only mode."""
+        runner = CliRunner()
+        output_path = tmp_path / "images_only.epub"
+
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            '--images-only',
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert 'Images-only' in result.output
+
+    def test_cache_stats_command(self):
+        """Test --cache-stats command without input file."""
+        runner = CliRunner()
+        result = runner.invoke(main, ['--cache-stats'])
+        assert result.exit_code == 0
+        assert 'translation_cache' in result.output
+        assert 'ocr_cache' in result.output
+
+    def test_cache_clear_and_prune_command(self):
+        """Test --cache-clear and --cache-prune-days command path."""
+        runner = CliRunner()
+        with patch("epub2kr.cli.TranslationCache") as mock_tcache_cls, \
+             patch("epub2kr.cli.OCRPrescanCache") as mock_ocache_cls:
+            tcache = MagicMock()
+            ocache = MagicMock()
+            tcache.prune.return_value = 3
+            ocache.prune.return_value = 2
+            mock_tcache_cls.return_value = tcache
+            mock_ocache_cls.return_value = ocache
+
+            result = runner.invoke(main, ['--cache-clear', '--cache-prune-days', '30'])
+
+        assert result.exit_code == 0
+        tcache.clear.assert_called_once()
+        ocache.clear.assert_called_once()
+        tcache.prune.assert_called_once_with(30)
+        ocache.prune.assert_called_once_with(30)
+        assert 'Caches cleared' in result.output
+        assert 'older than 30 days' in result.output
+
+    def test_log_json_option_prints_report(self, minimal_epub, mock_config, tmp_path):
+        """Test --log-json emits final JSON report."""
+        runner = CliRunner()
+        output_path = tmp_path / "log_json.epub"
+
+        with patch("epub2kr.cli.EpubTranslator") as mock_translator_cls:
+            tr = MagicMock()
+            tr.translate_epub.return_value = str(output_path)
+            tr.effective_source_lang = "zh-cn"
+            tr.get_last_report.return_value = {"performance": {"total_sec": 1.23}, "images": {"total": 1}}
+            mock_translator_cls.return_value = tr
+
+            result = runner.invoke(main, [
+                str(minimal_epub),
+                "-lo", "ko",
+                "--log-json",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        assert '"performance"' in result.output
+        assert '"total_sec": 1.23' in result.output
 
 
 class TestEndToEnd:
@@ -445,6 +536,46 @@ class TestEndToEnd:
 
         # Verify output exists
         assert output_path.exists()
+
+    def test_images_only_keeps_chapter_text_unchanged(self, minimal_epub, mock_translator_service, tmp_path):
+        """In images-only mode, chapter text should remain original."""
+        output_path = tmp_path / "images_only_text_unchanged.epub"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            "--images-only",
+            "-lo", "ko",
+            "-o", str(output_path),
+        ])
+        assert result.exit_code == 0
+        book = epub.read_epub(str(output_path))
+        spine_items = [book.get_item_with_id(item_id) for item_id, _ in book.spine]
+        found_original = False
+        for item in spine_items:
+            if item and hasattr(item, "get_content"):
+                content = item.get_content().decode("utf-8")
+                if "Hello World" in content:
+                    found_original = True
+                assert "[tr]Hello World" not in content
+        assert found_original
+
+    def test_resume_checkpoint_file_is_written(self, minimal_epub, mock_translator_service, tmp_path):
+        """Translation should write a resume checkpoint JSON file."""
+        output_path = tmp_path / "resume_checkpoint.epub"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            "-lo", "ko",
+            "-o", str(output_path),
+        ])
+        assert result.exit_code == 0
+        checkpoint_path = Path(f"{output_path}.resume.json")
+        assert checkpoint_path.exists()
+        data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        assert data.get("chapters_done") is True
+        assert data.get("images_done") is True
+        assert data.get("metadata_done") is True
+        assert data.get("saved_done") is True
 
     def test_bilingual_output(self, minimal_epub, mock_translator_service, tmp_path):
         """Test bilingual output contains both original and translated text."""

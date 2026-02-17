@@ -103,3 +103,39 @@ class OCRPrescanCache:
                 conn.commit()
             finally:
                 conn.close()
+
+    def clear(self) -> None:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("DELETE FROM ocr_regions")
+                conn.commit()
+            finally:
+                conn.close()
+
+    def prune(self, older_than_days: int) -> int:
+        cutoff = int(datetime.now().timestamp()) - (older_than_days * 86400)
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.execute(
+                    "DELETE FROM ocr_regions WHERE timestamp < ?",
+                    (cutoff,),
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute("SELECT COUNT(*) AS count FROM ocr_regions").fetchone()
+                db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
+                return {
+                    "total_entries": int(row["count"]) if row else 0,
+                    "db_size_bytes": db_size,
+                }
+            finally:
+                conn.close()
