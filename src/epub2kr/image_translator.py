@@ -96,6 +96,8 @@ class ImageTranslator:
         media_type: str,
         translate_func: Callable[[List[str]], List[str]],
         regions: Optional[List[OCRRegion]] = None,
+        translations: Optional[List[str]] = None,
+        on_translation: Optional[Callable[[List[OCRRegion], List[str]], None]] = None,
     ) -> Optional[bytes]:
         """Process an image: OCR detect text, translate, overlay.
 
@@ -121,12 +123,16 @@ class ImageTranslator:
         else:
             # Re-apply source-language filter in case source was refined after pre-scan.
             regions = [r for r in regions if self._matches_source_lang(r.text)]
+        regions = self.prepare_regions_for_translation(regions)
         if not regions:
             return None
 
         # Extract texts and translate
         source_texts = [r.text for r in regions]
-        translations = translate_func(source_texts)
+        if translations is None or len(translations) != len(source_texts):
+            translations = translate_func(source_texts)
+        if on_translation is not None:
+            on_translation(regions, translations)
         draw_pairs = [
             (region, translation)
             for region, translation in zip(regions, translations)
@@ -165,6 +171,13 @@ class ImageTranslator:
             img = img.convert('RGB')
 
         return self._detect_text(img)
+
+    def prepare_regions_for_translation(self, regions: List[OCRRegion]) -> List[OCRRegion]:
+        """Normalize region order/shape so translation units are stable across runs."""
+        if not regions:
+            return []
+        ordered = sorted(regions, key=lambda r: (r.y, r.x))
+        return self._merge_regions_for_translation(ordered)
 
     def _get_reader(self):
         """Lazy-initialize EasyOCR reader."""
@@ -234,6 +247,52 @@ class ImageTranslator:
         if not translated_text or not translated_text.strip():
             return False
         return self._canonical_text(source_text) != self._canonical_text(translated_text)
+
+    def _merge_regions_for_translation(self, regions: List[OCRRegion]) -> List[OCRRegion]:
+        """Merge adjacent OCR boxes into line-level units to reduce translation calls."""
+        if not regions:
+            return []
+
+        merged: List[OCRRegion] = []
+        current = regions[0]
+
+        for nxt in regions[1:]:
+            if self._should_merge_regions(current, nxt):
+                current = self._merge_two_regions(current, nxt)
+            else:
+                merged.append(current)
+                current = nxt
+        merged.append(current)
+        return merged
+
+    def _should_merge_regions(self, left: OCRRegion, right: OCRRegion) -> bool:
+        left_bottom = left.y + left.height
+        right_bottom = right.y + right.height
+        overlap = max(0, min(left_bottom, right_bottom) - max(left.y, right.y))
+        min_height = max(1, min(left.height, right.height))
+        vertical_overlap_ratio = overlap / min_height
+
+        horiz_gap = right.x - (left.x + left.width)
+        same_row = vertical_overlap_ratio >= 0.5
+        close_enough = horiz_gap <= max(24, int(max(left.height, right.height) * 1.5))
+        return same_row and close_enough
+
+    def _merge_two_regions(self, a: OCRRegion, b: OCRRegion) -> OCRRegion:
+        x1 = min(a.x, b.x)
+        y1 = min(a.y, b.y)
+        x2 = max(a.x + a.width, b.x + b.width)
+        y2 = max(a.y + a.height, b.y + b.height)
+        bbox = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+        use_space = not (self._is_cjk_text(a.text) and self._is_cjk_text(b.text))
+        sep = " " if use_space else ""
+        text = f"{a.text}{sep}{b.text}".strip()
+        conf = min(a.confidence, b.confidence)
+        return OCRRegion(bbox=bbox, text=text, confidence=conf)
+
+    @staticmethod
+    def _is_cjk_text(text: str) -> bool:
+        return re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7a3]", text) is not None
 
     def _matches_source_lang(self, text: str) -> bool:
         """Check whether OCR text matches the configured source language script."""

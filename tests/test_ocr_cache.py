@@ -43,3 +43,31 @@ class TestOCRPrescanCache:
             confidence_threshold=0.3,
         )
         assert loaded is None
+
+    def test_translation_cache_roundtrip(self, tmp_path):
+        cache = OCRPrescanCache(cache_dir=str(tmp_path / "ocr_cache"))
+        image_hash = hashlib.sha256(b"img-bytes").hexdigest()
+        regions_hash = hashlib.sha256(b"regions").hexdigest()
+        translations = ["안녕", "세계"]
+
+        cache.put_translations(
+            image_hash=image_hash,
+            source_lang="zh-cn",
+            target_lang="ko",
+            service_name="GoogleTranslateService",
+            media_type="image/png",
+            confidence_threshold=0.3,
+            regions_hash=regions_hash,
+            translations=translations,
+        )
+
+        loaded = cache.get_translations(
+            image_hash=image_hash,
+            source_lang="zh-cn",
+            target_lang="ko",
+            service_name="GoogleTranslateService",
+            media_type="image/png",
+            confidence_threshold=0.3,
+            regions_hash=regions_hash,
+        )
+        assert loaded == translations

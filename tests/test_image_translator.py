@@ -194,6 +194,36 @@ class TestProcessImage:
         )
         assert result is None
 
+    def test_adjacent_regions_are_merged_for_single_translation_call(self, image_with_text):
+        """Adjacent OCR boxes on one line should be merged into one translation unit."""
+        translator = ImageTranslator(source_lang='en')
+        regions = [
+            OCRRegion(
+                bbox=[[10, 10], [80, 10], [80, 30], [10, 30]],
+                text="Hello",
+                confidence=0.95,
+            ),
+            OCRRegion(
+                bbox=[[86, 10], [150, 10], [150, 30], [86, 30]],
+                text="World",
+                confidence=0.95,
+            ),
+        ]
+        calls = []
+
+        def capture_translate(texts):
+            calls.append(texts)
+            return ["안녕 세상"]
+
+        result = translator.process_image(
+            image_with_text,
+            'image/png',
+            capture_translate,
+            regions=regions,
+        )
+        assert result is not None
+        assert calls == [["Hello World"]]
+
 
 # --- Confidence filtering tests ---
 

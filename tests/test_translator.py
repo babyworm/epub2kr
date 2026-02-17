@@ -499,3 +499,79 @@ class TestImagePrescanCache:
                 out2 = translator._prefetch_image_regions(book, "zh-cn")
                 assert "images/p1.png" in out2
                 assert mock_reader.readtext.call_count == 1
+
+    def test_prefetch_reuses_cached_image_translations(self, mock_service, tmp_path):
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", source_lang="zh-cn", target_lang="ko", use_cache=True)
+            translator.cache = None
+
+            from epub2kr.ocr_cache import OCRPrescanCache
+            translator.ocr_cache = OCRPrescanCache(cache_dir=str(tmp_path / "ocr_cache"))
+
+            def make_book():
+                img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                img_item = epub.EpubImage(
+                    uid="img1",
+                    file_name="images/p1.png",
+                    media_type="image/png",
+                    content=buf.getvalue(),
+                )
+                book = MagicMock()
+                book.get_items.return_value = [img_item]
+                return book
+
+            ocr_region = [
+                (
+                    [[10, 10], [100, 10], [100, 40], [10, 40]],
+                    "中文",
+                    0.95,
+                )
+            ]
+
+            with patch("epub2kr.image_translator.ImageTranslator._get_reader") as mock_get_reader:
+                mock_reader = MagicMock()
+                mock_reader.readtext.return_value = ocr_region
+                mock_get_reader.return_value = mock_reader
+
+                # First pass populates translation cache
+                book1 = make_book()
+                pref1 = translator._prefetch_image_regions(book1, "zh-cn")
+                translator._translate_images(book1, pref1, show_progress=False)
+                assert mock_service.translate.call_count >= 1
+
+                # Second pass should reuse cached translations (no service call)
+                mock_service.translate.reset_mock()
+                book2 = make_book()
+                pref2 = translator._prefetch_image_regions(book2, "zh-cn")
+                translator._translate_images(book2, pref2, show_progress=False)
+                mock_service.translate.assert_not_called()
+
+    def test_translate_images_skips_resume_done_files(self, mock_service):
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", source_lang="en", target_lang="ko", use_cache=False)
+
+            img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_item = epub.EpubImage(
+                uid="img1",
+                file_name="images/p1.png",
+                media_type="image/png",
+                content=buf.getvalue(),
+            )
+            book = MagicMock()
+            book.get_items.return_value = [img_item]
+
+            with patch("epub2kr.image_translator.ImageTranslator.process_image") as mock_process:
+                processed, skipped, errors, total = translator._translate_images(
+                    book,
+                    prefetched_regions={},
+                    show_progress=False,
+                    resume_done_files={"images/p1.png"},
+                )
+                assert (processed, skipped, errors, total) == (0, 1, 0, 1)
+                mock_process.assert_not_called()
