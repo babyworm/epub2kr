@@ -6,8 +6,12 @@ EPUB 파일을 레이아웃을 보존하면서 번역하는 CLI 도구입니다.
 
 - HTML/CSS 레이아웃을 완벽히 보존하면서 EPUB 번역
 - 4가지 번역 서비스 지원: Google Translate (기본, 무료), DeepL, OpenAI, Ollama
+- 이미지 내 텍스트 OCR 번역 지원 (PNG/JPEG)
+- `auto` 소스 언어 감지 후 실제 감지 언어를 파이프라인 전체(본문/메타/TOC/OCR)에 일관 적용
+- 이미지 pre-scan(OCR 선탐색) + 병렬 처리 + 선제 skip으로 대용량 EPUB 처리 속도 개선
 - 한국어/일본어/중국어 번역 시 Noto 폰트 및 가독성 최적화 CSS 자동 적용
 - SQLite 기반 번역 캐시로 중복 번역 방지
+- SQLite 기반 OCR pre-scan 캐시로 재실행 시 OCR 재계산 최소화
 - 멀티스레드 병렬 번역으로 빠른 처리
 - 원문+번역문을 함께 보여주는 바이링구얼 모드
 - 목차(TOC) 자동 번역
@@ -71,14 +75,29 @@ epub2kr book.epub -s openai --base-url http://localhost:8000/v1 --api-key dummy 
 # 바이링구얼 모드 (원문 + 번역문)
 epub2kr book.epub --bilingual -lo ko
 
-# 멀티스레드 (4스레드)
+# 문서 번역 멀티스레드 (4스레드)
 epub2kr book.epub -t 4 -lo ko
+
+# 이미지 OCR/번역 멀티스레드 (4스레드)
+epub2kr book.epub -j 4 -lo ko
+
+# 문서 1스레드 + 이미지 3스레드
+epub2kr book.epub -t 1 -j 3 -lo ko
+
+# 이미지 OCR 번역 비활성화
+epub2kr book.epub --no-translate-images -lo ko
 
 # 캐시 비활성화
 epub2kr book.epub --no-cache -lo ko
 
 # 소스 언어 직접 지정 (기본: auto)
 epub2kr book.epub -li zh -lo en
+```
+
+`-li auto`일 때는 번역 진행 중 감지된 언어가 로그/요약에 다음처럼 표시됩니다.
+
+```text
+Translation: auto (detected: zh-cn) -> ko (Korean)
 ```
 
 ### 폰트/줄간 설정 (CJK)
@@ -134,7 +153,9 @@ epub2kr-restyle book.ko.epub --gui
 | `-li, --source-lang` | 소스 언어 코드 | `auto` |
 | `-lo, --target-lang` | 대상 언어 코드 | `en` |
 | `-t, --threads` | 병렬 스레드 수 | `4` |
+| `-j, --image-threads` | 이미지 OCR/번역 병렬 스레드 수 | `threads`와 동일 |
 | `--no-cache` | 번역 캐시 비활성화 | `false` |
+| `--no-translate-images` | 이미지 OCR 번역 비활성화 | `false` |
 | `--bilingual` | 바이링구얼 출력 생성 | `false` |
 | `--api-key` | 번역 서비스 API 키 | - |
 | `--model` | 모델 이름 (OpenAI/Ollama용) | - |
@@ -207,6 +228,12 @@ EPUB 리더에 지정한 폰트가 설치되어 있으면 자동으로 적용됩
 - 캐시 키: `SHA-256(원문) + 소스언어 + 대상언어 + 서비스명`
 - `--no-cache` 옵션으로 비활성화 가능
 
+이미지 OCR pre-scan 결과는 `~/.epub2kr/ocr_cache.db`에 별도 저장됩니다.
+
+- 캐시 키: `SHA-256(이미지 bytes) + 소스언어 + 미디어타입 + OCR confidence threshold`
+- pre-scan에서 "번역 대상 없음"으로 판정된 이미지는 본 처리 단계에서 즉시 skip
+- `--no-cache` 사용 시 OCR 캐시도 함께 비활성화
+
 ## 프로젝트 구조
 
 ```
@@ -218,7 +245,9 @@ src/epub2kr/
 ├── translator.py        # 번역 파이프라인 오케스트레이터
 ├── epub_parser.py       # EPUB 읽기/쓰기 (ebooklib)
 ├── text_extractor.py    # XHTML 텍스트 추출/교체 (lxml)
+├── image_translator.py  # 이미지 OCR + 텍스트 오버레이
 ├── cache.py             # SQLite 번역 캐시
+├── ocr_cache.py         # SQLite OCR pre-scan 캐시
 └── services/
     ├── __init__.py      # 서비스 팩토리
     ├── base.py          # 추상 베이스 클래스
