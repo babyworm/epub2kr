@@ -259,7 +259,6 @@ src/epub2kr/
 
 ## 라이선스
 
-이 프로젝트는 [GNU Affero General Public License v3.0](LICENSE)에 따라 배포됩니다. 자세한 내용은 [NOTICE](NOTICE) 파일을 참조하세요.
-
 Author: Hyun-Gyu (Ethan) Kim
-This project is licensed under AGPL-3.0-or-later. See LICENSE and NOTICE.
+
+이 프로젝트는 [GNU Affero General Public License v3.0](LICENSE)에 따라 배포됩니다. 자세한 내용은 [NOTICE](NOTICE) 파일을 참조하세요.
