@@ -174,3 +174,6 @@ src/epub2kr/
 
 This project is licensed under AGPL-3.0-or-later.
 See `LICENSE` and `NOTICE`.
+
+Author: Hyun-Gyu (Ethan) Kim
+This project is licensed under AGPL-3.0-or-later. See LICENSE and NOTICE.
