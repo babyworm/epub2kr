@@ -1,10 +1,12 @@
 """Shared fixtures for epub2kr tests."""
+import io
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont
 
 from epub2kr.cache import TranslationCache
 from epub2kr.services.base import BaseTranslationService
@@ -124,3 +126,36 @@ def minimal_epub(tmp_path):
     epub_path = tmp_path / "test.epub"
     epub.write_epub(str(epub_path), book)
     return epub_path
+
+
+@pytest.fixture
+def image_with_text():
+    """Create a synthetic PNG image with text drawn on it."""
+    img = Image.new('RGB', (400, 200), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+    draw.text((50, 80), "Hello World", fill=(0, 0, 0), font=font)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+@pytest.fixture
+def image_without_text():
+    """Create a solid color image with no text."""
+    img = Image.new('RGB', (200, 200), color=(128, 128, 200))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+@pytest.fixture
+def tiny_image():
+    """Create an image smaller than the minimum dimension threshold."""
+    img = Image.new('RGB', (50, 50), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()

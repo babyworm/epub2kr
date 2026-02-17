@@ -17,6 +17,8 @@ dependencies = [
     "openai>=1.0",
     "deepl>=1.16",
     "langdetect>=1.0",
+    "easyocr>=1.7",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
