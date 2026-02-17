@@ -138,6 +138,29 @@ class TestGoogleTranslateService:
                 assert mock_sleep.call_count == 2
                 mock_sleep.assert_called_with(0.1)
 
+    def test_retry_then_success(self):
+        """Transient failure should be retried with backoff and then succeed."""
+        service = GoogleTranslateService(max_retries=2, retry_backoff_base=0.05, retry_backoff_max=0.05)
+
+        with patch.object(service, "_translate_single", side_effect=[Exception("tmp"), "성공"]) as mock_single:
+            with patch("time.sleep") as mock_sleep:
+                result = service.translate(["Hello"], "en", "ko")
+
+        assert result == ["성공"]
+        assert mock_single.call_count == 2
+        mock_sleep.assert_called_once_with(0.05)
+
+    def test_retry_exhausted_returns_original(self):
+        """When retries are exhausted, original text should be returned."""
+        service = GoogleTranslateService(max_retries=1, retry_backoff_base=0.01, retry_backoff_max=0.01)
+
+        with patch.object(service, "_translate_single", side_effect=Exception("down")) as mock_single:
+            with patch("time.sleep"):
+                result = service.translate(["Hello"], "en", "ko")
+
+        assert result == ["Hello"]
+        assert mock_single.call_count == 2
+
 
 class TestDeepLService:
     """Tests for DeepL service."""

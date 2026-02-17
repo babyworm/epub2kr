@@ -14,7 +14,10 @@ class OllamaService(BaseTranslationService):
         model: str = "llama2",
         base_url: str = None,
         temperature: float = 0.3,
-        timeout: int = 60
+        timeout: int = 60,
+        max_retries: int = 2,
+        retry_backoff_base: float = 0.5,
+        retry_backoff_max: float = 4.0,
     ):
         """Initialize Ollama service.
 
@@ -24,6 +27,11 @@ class OllamaService(BaseTranslationService):
             temperature: Sampling temperature (default: 0.3 for consistent translations)
             timeout: Request timeout in seconds
         """
+        super().__init__(
+            max_retries=max_retries,
+            retry_backoff_base=retry_backoff_base,
+            retry_backoff_max=retry_backoff_max,
+        )
         self.model = model
         self.base_url = base_url or os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
         self.temperature = temperature
@@ -56,7 +64,9 @@ class OllamaService(BaseTranslationService):
                 continue
 
             try:
-                translated = self._translate_single(text, source_lang, target_lang)
+                translated = self._with_retries(
+                    lambda: self._translate_single(text, source_lang, target_lang)
+                )
                 results.append(translated)
             except Exception as e:
                 print(f"Ollama translation error: {e}")

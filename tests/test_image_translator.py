@@ -152,7 +152,7 @@ class TestProcessImage:
 
         translator = ImageTranslator()
         result = translator.process_image(
-            buf.getvalue(), 'image/png', lambda texts: texts
+            buf.getvalue(), 'image/png', lambda texts: [f"T:{t}" for t in texts]
         )
         assert result is not None
 
@@ -175,6 +175,24 @@ class TestProcessImage:
         )
         assert result is not None
         mock_detect_text.assert_not_called()
+
+    def test_same_translation_returns_none(self, image_with_text):
+        """If translation is effectively identical, image should not be rewritten."""
+        translator = ImageTranslator(source_lang='en')
+        regions = [
+            OCRRegion(
+                bbox=[[50, 80], [200, 80], [200, 110], [50, 110]],
+                text="Hello  World",
+                confidence=0.95,
+            )
+        ]
+        result = translator.process_image(
+            image_with_text,
+            'image/png',
+            lambda texts: ["hello world"],
+            regions=regions,
+        )
+        assert result is None
 
 
 # --- Confidence filtering tests ---
@@ -250,6 +268,39 @@ class TestConfidenceFiltering:
         mock_get_reader.return_value.readtext.return_value = ocr_results
 
         translator = ImageTranslator(source_lang='zh-cn')
+        result = translator.process_image(image_with_text, 'image/png', lambda texts: texts)
+        assert result is None
+
+    @patch('epub2kr.image_translator.ImageTranslator._get_reader')
+    def test_ocr_text_is_normalized_before_translation(self, mock_get_reader, image_with_text):
+        """OCR text should be normalized (NFKC + whitespace cleanup)."""
+        ocr_results = [
+            ([[10, 10], [120, 10], [120, 40], [10, 40]], "  Hello\n   World  ", 0.9),
+        ]
+        mock_get_reader.return_value = MagicMock()
+        mock_get_reader.return_value.readtext.return_value = ocr_results
+
+        captured = []
+
+        def capture_translate(texts):
+            captured.append(texts)
+            return ["안녕하세요 세계"]
+
+        translator = ImageTranslator(source_lang='en')
+        translator.process_image(image_with_text, 'image/png', capture_translate)
+        assert captured == [["Hello World"]]
+
+    @patch('epub2kr.image_translator.ImageTranslator._get_reader')
+    def test_noise_only_ocr_text_is_skipped(self, mock_get_reader, image_with_text):
+        """Punctuation-only OCR noise should not trigger translation."""
+        ocr_results = [
+            ([[10, 10], [30, 10], [30, 30], [10, 30]], "...", 0.95),
+            ([[40, 40], [60, 40], [60, 60], [40, 60]], "—", 0.95),
+        ]
+        mock_get_reader.return_value = MagicMock()
+        mock_get_reader.return_value.readtext.return_value = ocr_results
+
+        translator = ImageTranslator(source_lang='en')
         result = translator.process_image(image_with_text, 'image/png', lambda texts: texts)
         assert result is None
 

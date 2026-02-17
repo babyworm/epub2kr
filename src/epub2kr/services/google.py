@@ -10,12 +10,23 @@ from .base import BaseTranslationService
 class GoogleTranslateService(BaseTranslationService):
     """Google Translate implementation using free web endpoint."""
 
-    def __init__(self, rate_limit_delay: float = 0.5):
+    def __init__(
+        self,
+        rate_limit_delay: float = 0.5,
+        max_retries: int = 2,
+        retry_backoff_base: float = 0.5,
+        retry_backoff_max: float = 4.0,
+    ):
         """Initialize Google Translate service.
 
         Args:
             rate_limit_delay: Delay in seconds between requests to avoid rate limiting
         """
+        super().__init__(
+            max_retries=max_retries,
+            retry_backoff_base=retry_backoff_base,
+            retry_backoff_max=retry_backoff_max,
+        )
         self.rate_limit_delay = rate_limit_delay
         self.base_url = "https://translate.googleapis.com/translate_a/single"
 
@@ -45,7 +56,9 @@ class GoogleTranslateService(BaseTranslationService):
                 continue
 
             try:
-                translated = self._translate_single(text, source_lang, target_lang)
+                translated = self._with_retries(
+                    lambda: self._translate_single(text, source_lang, target_lang)
+                )
                 results.append(translated)
             except Exception as e:
                 # On error, return original text

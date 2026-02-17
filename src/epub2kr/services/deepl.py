@@ -8,13 +8,25 @@ from .base import BaseTranslationService
 class DeepLService(BaseTranslationService):
     """DeepL API implementation."""
 
-    def __init__(self, api_key: str = None, use_free: bool = True):
+    def __init__(
+        self,
+        api_key: str = None,
+        use_free: bool = True,
+        max_retries: int = 2,
+        retry_backoff_base: float = 0.5,
+        retry_backoff_max: float = 4.0,
+    ):
         """Initialize DeepL service.
 
         Args:
             api_key: DeepL API key (if None, reads from DEEPL_API_KEY env var)
             use_free: Whether to use free API endpoint (default: True)
         """
+        super().__init__(
+            max_retries=max_retries,
+            retry_backoff_base=retry_backoff_base,
+            retry_backoff_max=retry_backoff_max,
+        )
         self.api_key = api_key or os.getenv('DEEPL_API_KEY')
         if not self.api_key:
             raise ValueError("DeepL API key required. Set DEEPL_API_KEY or pass api_key parameter")
@@ -64,10 +76,12 @@ class DeepLService(BaseTranslationService):
 
         try:
             # Translate batch
-            results = self.translator.translate_text(
-                texts_to_translate,
-                source_lang=source if source else None,  # None = auto-detect
-                target_lang=target
+            results = self._with_retries(
+                lambda: self.translator.translate_text(
+                    texts_to_translate,
+                    source_lang=source if source else None,  # None = auto-detect
+                    target_lang=target,
+                )
             )
 
             # Handle both single result and list of results

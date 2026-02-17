@@ -3,6 +3,7 @@ import io
 import re
 import subprocess
 import shutil
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable, Tuple
 
@@ -114,10 +115,6 @@ class ImageTranslator:
         if img.width < MIN_IMAGE_DIMENSION or img.height < MIN_IMAGE_DIMENSION:
             return None
 
-        # Convert to RGB if needed (RGBA, palette, etc.)
-        if img.mode not in ('RGB', 'RGBA'):
-            img = img.convert('RGB')
-
         # Detect text regions (or reuse pre-scanned ones).
         if regions is None:
             regions = self._detect_text(img)
@@ -130,9 +127,20 @@ class ImageTranslator:
         # Extract texts and translate
         source_texts = [r.text for r in regions]
         translations = translate_func(source_texts)
+        draw_pairs = [
+            (region, translation)
+            for region, translation in zip(regions, translations)
+            if self._should_draw_translation(region.text, translation)
+        ]
+        if not draw_pairs:
+            return None
 
         # Render translations over original
-        result = self._render_translations(img, regions, translations)
+        result = self._render_translations(
+            img,
+            [region for region, _ in draw_pairs],
+            [translation for _, translation in draw_pairs],
+        )
 
         # Encode back to original format
         output = io.BytesIO()
@@ -186,14 +194,46 @@ class ImageTranslator:
 
         regions = []
         for bbox, text, confidence in results:
+            normalized = self._normalize_ocr_text(text)
             if (
                 confidence >= self.confidence_threshold
-                and text.strip()
-                and self._matches_source_lang(text)
+                and normalized
+                and not self._is_noise_text(normalized)
+                and self._matches_source_lang(normalized)
             ):
-                regions.append(OCRRegion(bbox=bbox, text=text, confidence=confidence))
+                regions.append(OCRRegion(bbox=bbox, text=normalized, confidence=confidence))
 
         return regions
+
+    def _normalize_ocr_text(self, text: str) -> str:
+        """Normalize OCR text so translation input is cleaner and more stable."""
+        normalized = unicodedata.normalize("NFKC", text or "")
+        normalized = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
+    def _is_noise_text(self, text: str) -> bool:
+        """Filter obvious OCR noise (punctuation-only or extremely short symbols)."""
+        if not text:
+            return True
+        if len(text) == 1 and not re.search(r"[A-Za-z0-9\u3400-\u9fff\u3040-\u30ff\uac00-\ud7a3]", text):
+            return True
+        if not re.search(
+            r"[A-Za-z0-9\u3400-\u9fff\u3040-\u30ff\uac00-\ud7a3\u0400-\u04ff\u0600-\u06ff\u0590-\u05ff\u0900-\u097f\u0e00-\u0e7f]",
+            text,
+        ):
+            return True
+        return False
+
+    def _canonical_text(self, text: str) -> str:
+        normalized = self._normalize_ocr_text(text).casefold()
+        return re.sub(r"\s+", "", normalized)
+
+    def _should_draw_translation(self, source_text: str, translated_text: str) -> bool:
+        """Return True only when translation implies a visible text replacement."""
+        if not translated_text or not translated_text.strip():
+            return False
+        return self._canonical_text(source_text) != self._canonical_text(translated_text)
 
     def _matches_source_lang(self, text: str) -> bool:
         """Check whether OCR text matches the configured source language script."""

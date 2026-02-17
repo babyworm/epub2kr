@@ -14,7 +14,10 @@ class OpenAIService(BaseTranslationService):
         base_url: str = None,
         model: str = "gpt-3.5-turbo",
         temperature: float = 0.3,
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        max_retries: int = 2,
+        retry_backoff_base: float = 0.5,
+        retry_backoff_max: float = 4.0,
     ):
         """Initialize OpenAI service.
 
@@ -25,6 +28,11 @@ class OpenAIService(BaseTranslationService):
             temperature: Sampling temperature (default: 0.3 for consistent translations)
             max_tokens: Maximum tokens in response
         """
+        super().__init__(
+            max_retries=max_retries,
+            retry_backoff_base=retry_backoff_base,
+            retry_backoff_max=retry_backoff_max,
+        )
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError("OpenAI API key required. Set OPENAI_API_KEY or pass api_key parameter")
@@ -73,7 +81,9 @@ class OpenAIService(BaseTranslationService):
                 continue
 
             try:
-                translated = self._translate_single(text, source_lang, target_lang)
+                translated = self._with_retries(
+                    lambda: self._translate_single(text, source_lang, target_lang)
+                )
                 results.append(translated)
             except Exception as e:
                 print(f"OpenAI translation error: {e}")
