@@ -347,6 +347,22 @@ class TestCLI:
         assert '"performance"' in result.output
         assert '"total_sec": 1.23' in result.output
 
+    def test_dry_run_option_does_not_write_output(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """--dry-run should not create output EPUB."""
+        runner = CliRunner()
+        output_path = tmp_path / "dry_run.epub"
+
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            "-lo", "ko",
+            "--dry-run",
+            "-o", str(output_path),
+        ])
+
+        assert result.exit_code == 0
+        assert "Dry-run: enabled" in result.output
+        assert not output_path.exists()
+
 
 class TestEndToEnd:
     """Test end-to-end translation pipeline."""

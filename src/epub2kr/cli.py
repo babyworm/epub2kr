@@ -31,6 +31,8 @@ from .ocr_cache import OCRPrescanCache
 @click.option('--no-translate-images', is_flag=True, help='Skip OCR translation of image text')
 @click.option('--images-only', is_flag=True, help='Only run image OCR/translation (skip chapter text translation)')
 @click.option('--resume', is_flag=True, help='Resume from existing output (image-focused continuation)')
+@click.option('--dry-run', is_flag=True, help='Analyze workload without writing output')
+@click.option('--image-quality', type=click.Choice(['fast', 'balanced', 'quality']), default='balanced', show_default=True, help='Image text rendering quality mode')
 @click.option('--verbose', is_flag=True, help='Verbose logs')
 @click.option('--quiet', is_flag=True, help='Minimal logs')
 @click.option('--log-json', is_flag=True, help='Print final summary as JSON')
@@ -38,7 +40,7 @@ from .ocr_cache import OCRPrescanCache
 @click.option('--cache-clear', is_flag=True, help='Clear translation/OCR caches and exit')
 @click.option('--cache-prune-days', default=None, type=int, help='Prune cache entries older than N days and exit')
 @click.option('--setup', is_flag=True, help='Run interactive setup wizard')
-def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, images_only, resume, verbose, quiet, log_json, cache_stats, cache_clear, cache_prune_days, setup):
+def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, images_only, resume, dry_run, image_quality, verbose, quiet, log_json, cache_stats, cache_clear, cache_prune_days, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
     \b
@@ -143,6 +145,8 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
             translate_images=not no_translate_images,
             images_only=images_only,
             resume=resume,
+            dry_run=dry_run,
+            image_quality=image_quality,
             verbose=verbose,
             quiet=quiet,
             **service_kwargs
@@ -163,11 +167,14 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
             source_display = lang_label(source_lang)
         console.print(f"  Language: {source_display} → {lang_label(target_lang)}")
         console.print(f"  Threads: chapters={threads}, images={image_threads if image_threads is not None else threads}")
+        console.print(f"  Image quality: {image_quality}")
         console.print(f"  Cache: {'disabled' if no_cache else 'enabled'}")
         if images_only:
             console.print("  Mode: Images-only")
         if resume:
             console.print("  Resume: enabled")
+        if dry_run:
+            console.print("  Dry-run: enabled (no output written)")
         if bilingual:
             console.print(f"  Mode: Bilingual")
         if target_lang.lower() in CJK_LANGS:

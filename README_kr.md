@@ -175,6 +175,8 @@ epub2kr-restyle book.ko.epub --gui
 | `--no-translate-images` | 이미지 OCR 번역 비활성화 | `false` |
 | `--images-only` | 이미지 OCR/번역만 수행 | `false` |
 | `--resume` | 기존 출력에서 재개 | `false` |
+| `--dry-run` | 작업량만 분석 (출력 EPUB 저장 안 함) | `false` |
+| `--image-quality` | 이미지 렌더 품질 (`fast/balanced/quality`) | `balanced` |
 | `--verbose` | 상세 로그 출력 | `false` |
 | `--quiet` | 최소 로그 출력 | `false` |
 | `--log-json` | 최종 리포트 JSON 출력 | `false` |
@@ -250,12 +252,12 @@ EPUB 리더에 지정한 폰트가 설치되어 있으면 자동으로 적용됩
 
 번역 결과는 `~/.epub2kr/cache.db` (SQLite)에 자동 캐싱됩니다. 동일한 텍스트를 다시 번역할 때 API 호출 없이 캐시에서 즉시 반환합니다.
 
-- 캐시 키: `SHA-256(원문) + 소스언어 + 대상언어 + 서비스명`
+- 캐시 키: `SHA-256(원문) + 소스언어 + 대상언어 + 서비스명 + cache_version`
 - `--no-cache` 옵션으로 비활성화 가능
 
 이미지 OCR pre-scan 결과는 `~/.epub2kr/ocr_cache.db`에 별도 저장됩니다.
 
-- 캐시 키: `SHA-256(이미지 bytes) + 소스언어 + 미디어타입 + OCR confidence threshold`
+- 캐시 키: `SHA-256(이미지 bytes) + 소스언어 + 미디어타입 + OCR confidence threshold + cache_version`
 - pre-scan에서 "번역 대상 없음"으로 판정된 이미지는 본 처리 단계에서 즉시 skip
 - `--no-cache` 사용 시 OCR 캐시도 함께 비활성화
 
@@ -268,6 +270,8 @@ EPUB 리더에 지정한 폰트가 설치되어 있으면 자동으로 적용됩
 ## 리포트 및 벤치마크
 
 - 실행 종료 시 단계별 성능 요약(`chapters/images/metadata/save/total`)이 출력됩니다.
+- 이미지 파이프라인 리포트에 OCR pre-scan 시간, 번역 시간, 렌더 시간, skip 사유가 포함됩니다.
+- `--dry-run`으로 출력 파일 생성 없이 예상 작업량을 확인할 수 있습니다.
 - `--log-json` 옵션으로 기계 처리 가능한 최종 리포트를 출력할 수 있습니다.
 - 경량 벤치마크 스모크 테스트는 `tests/test_benchmark.py`에 포함되어 있습니다.
 

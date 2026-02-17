@@ -116,8 +116,10 @@ class EpubTranslator:
         translate_images: bool = True,
         images_only: bool = False,
         resume: bool = False,
+        dry_run: bool = False,
         verbose: bool = False,
         quiet: bool = False,
+        image_quality: str = "balanced",
         **service_kwargs
     ):
         """Initialize the EPUB translator.
@@ -138,8 +140,10 @@ class EpubTranslator:
             translate_images: Whether to OCR and translate text in images
             images_only: Only run image OCR/translation pipeline
             resume: Resume from existing output (image-focused continuation)
+            dry_run: Analyze workload without writing output
             verbose: Enable verbose logs
             quiet: Suppress non-essential logs
+            image_quality: Image render quality mode (fast, balanced, quality)
             **service_kwargs: Additional arguments for translation service
         """
         self.service = get_service(service_name, **service_kwargs)
@@ -156,8 +160,10 @@ class EpubTranslator:
         self.translate_images = translate_images
         self.images_only = images_only
         self.resume = resume
+        self.dry_run = dry_run
         self.verbose = verbose
         self.quiet = quiet
+        self.image_quality = image_quality
         self.font_size = font_size
         self.line_height = line_height
         self.font_family = font_family
@@ -221,6 +227,7 @@ class EpubTranslator:
             "saved_done": False,
             "chapter_files_done": [],
             "image_files_done": [],
+            "image_stages": {},
             "chapter_count_done": 0,
             "image_count_done": 0,
         }
@@ -232,7 +239,7 @@ class EpubTranslator:
         checkpoint["image_count_done"] = int(checkpoint.get("image_count_done", len(checkpoint["image_files_done"])))
         checkpoint["saved_done"] = False
         checkpoint_lock = threading.Lock()
-        if output_path:
+        if output_path and not self.dry_run:
             self._save_resume_checkpoint(output_path, checkpoint)
         if self.resume and output_path and Path(output_path).exists() and not effective_images_only:
             load_path = output_path
@@ -262,11 +269,17 @@ class EpubTranslator:
         self.console.print(f"[cyan]Service:[/cyan] {self.service.__class__.__name__}")
         self.console.print(f"[cyan]Threads:[/cyan] {self.threads}")
         self.console.print(f"[cyan]Image threads:[/cyan] {self.image_threads}")
+        self.console.print(f"[cyan]Image quality:[/cyan] {self.image_quality}")
         self.console.print(f"[cyan]Cache:[/cyan] {'enabled' if self.cache else 'disabled'}")
         if effective_images_only:
             self.console.print("[cyan]Mode:[/cyan] Images-only")
         if self.bilingual:
             self.console.print("[cyan]Mode:[/cyan] Bilingual")
+        if self.dry_run:
+            self.console.print("[cyan]Mode:[/cyan] Dry-run")
+
+        if self.dry_run:
+            return self._run_dry_run(book, content_docs, output_path)
 
         # Translate documents with progress bar
         chapter_start = time.perf_counter()
@@ -297,6 +310,15 @@ class EpubTranslator:
                     checkpoint["image_count_done"] = len(done_files)
                 self._save_resume_checkpoint(output_path, checkpoint)
 
+        def mark_image_stage(file_name: str, stage: str) -> None:
+            if not output_path:
+                return
+            with checkpoint_lock:
+                image_stages = checkpoint.setdefault("image_stages", {})
+                one = image_stages.setdefault(file_name, {})
+                one[stage] = True
+                self._save_resume_checkpoint(output_path, checkpoint)
+
         if self.translate_images:
             self.console.print("[cyan]Pre-scanning images for OCR candidates (background)...[/cyan]")
             image_prefetch_executor = ThreadPoolExecutor(max_workers=1)
@@ -306,6 +328,7 @@ class EpubTranslator:
                 self.effective_source_lang,
                 prefetch_state,
                 prefetch_lock,
+                mark_image_stage,
             )
 
         def maybe_start_image_translation():
@@ -330,6 +353,7 @@ class EpubTranslator:
                 10,
                 resumed_image_files,
                 mark_image_done,
+                mark_image_stage,
             )
             image_translate_started = True
             self.console.print("[cyan]Pre-scan ready. Starting image translation in background...[/cyan]")
@@ -489,10 +513,17 @@ class EpubTranslator:
                     True,
                     resume_done_files=resumed_image_files,
                     on_image_done=mark_image_done,
+                    on_image_stage=mark_image_stage,
                 )
+            skip_reasons = getattr(self, "_last_image_skip_reasons", {})
             self.console.print(
                 f"[cyan]Image OCR summary:[/cyan] processed={processed}, skipped={skipped}, errors={errors}, total={total}"
             )
+            if skip_reasons:
+                self.console.print(
+                    "[cyan]Image skip reasons:[/cyan] "
+                    + ", ".join(f"{k}={v}" for k, v in sorted(skip_reasons.items()))
+                )
         else:
             processed = skipped = errors = total = 0
         images_elapsed = time.perf_counter() - images_start
@@ -577,6 +608,12 @@ class EpubTranslator:
             perf["translation_cache"] = self.cache.stats()
         if self.ocr_cache:
             perf["ocr_cache"] = self.ocr_cache.stats()
+        image_pipeline = dict(getattr(self, "_last_image_perf", {}))
+        ocr_prescan = dict(getattr(self, "_last_prefetch_perf", {}))
+        if "ocr_sec" in image_pipeline and float(image_pipeline.get("ocr_sec", 0.0)) == 0.0:
+            image_pipeline["ocr_sec"] = float(ocr_prescan.get("ocr_detect_sec", 0.0))
+        perf["image_pipeline"] = image_pipeline
+        perf["ocr_prescan"] = ocr_prescan
         self._last_report = {
             "output_path": output_path,
             "effective_source_lang": self.effective_source_lang,
@@ -586,6 +623,7 @@ class EpubTranslator:
                 "skipped": skipped,
                 "errors": errors,
                 "total": total,
+                "skip_reasons": getattr(self, "_last_image_skip_reasons", {}),
             },
             "performance": perf,
         }
@@ -605,6 +643,7 @@ class EpubTranslator:
         background_log_interval: int = 10,
         resume_done_files: Optional[Set[str]] = None,
         on_image_done: Optional[Callable[[str], None]] = None,
+        on_image_stage: Optional[Callable[[str, str], None]] = None,
     ) -> tuple[int, int, int, int]:
         """Translate text found in images via OCR.
 
@@ -623,12 +662,26 @@ class EpubTranslator:
                 translator = ImageTranslator(
                     source_lang=self.effective_source_lang,
                     target_lang=self.target_lang,
+                    render_quality=self.image_quality,
                 )
                 thread_state.image_translator = translator
             return translator
 
         prefetch_map = prefetched_regions or {}
         done_file_set = set(resume_done_files or set())
+        skip_reasons = {
+            "resume_done": 0,
+            "prescan_no_text": 0,
+            "no_change": 0,
+            "no_regions": 0,
+            "error": 0,
+        }
+        perf = {
+            "ocr_sec": 0.0,
+            "translate_sec": 0.0,
+            "render_sec": 0.0,
+        }
+        perf_lock = threading.Lock()
 
         def _entry_to_regions_and_translations(entry):
             if isinstance(entry, dict):
@@ -649,6 +702,11 @@ class EpubTranslator:
                 captured["regions"] = regs
                 captured["translations"] = trs
 
+            def on_timing(stat):
+                with perf_lock:
+                    perf["translate_sec"] += float(stat.get("translate_sec", 0.0))
+                    perf["render_sec"] += float(stat.get("render_sec", 0.0))
+
             result = translator.process_image(
                 image_bytes,
                 item.media_type,
@@ -656,6 +714,7 @@ class EpubTranslator:
                 regions=regions,
                 translations=prefetched_translations,
                 on_translation=on_translation,
+                on_timing=on_timing,
             )
             if (
                 self.ocr_cache
@@ -675,6 +734,11 @@ class EpubTranslator:
                     regions_hash=regions_hash,
                     translations=[str(t) for t in captured["translations"]],
                 )
+            if on_image_stage is not None:
+                if captured["regions"]:
+                    on_image_stage(item.file_name, "translate_done")
+                if result is not None:
+                    on_image_stage(item.file_name, "render_done")
             return item, result
 
         # Collect processable images first to know the total count
@@ -697,11 +761,13 @@ class EpubTranslator:
         for item in image_items:
             if item.file_name in done_file_set:
                 pre_skipped += 1
+                skip_reasons["resume_done"] += 1
             elif (
                 item.file_name in prefetch_map
                 and self._prefetched_regions_empty(prefetch_map[item.file_name])
             ):
                 pre_skipped += 1
+                skip_reasons["prescan_no_text"] += 1
             else:
                 translate_items.append(item)
 
@@ -760,6 +826,12 @@ class EpubTranslator:
                                 processed += 1
                             else:
                                 skipped += 1
+                                pre_entry = prefetch_map.get(item.file_name)
+                                regions, _ = _entry_to_regions_and_translations(pre_entry)
+                                if regions:
+                                    skip_reasons["no_change"] += 1
+                                else:
+                                    skip_reasons["no_regions"] += 1
                             if on_image_done is not None:
                                 on_image_done(item.file_name)
                         except Exception as e:
@@ -767,6 +839,7 @@ class EpubTranslator:
                                 f"[yellow]Warning: Failed to process image '{item.file_name}': {e}[/yellow]"
                             )
                             errors += 1
+                            skip_reasons["error"] += 1
                         finally:
                             completed += 1
                             if progress is not None and task is not None:
@@ -793,6 +866,12 @@ class EpubTranslator:
                             processed += 1
                         else:
                             skipped += 1
+                            pre_entry = prefetch_map.get(item.file_name)
+                            regions, _ = _entry_to_regions_and_translations(pre_entry)
+                            if regions:
+                                skip_reasons["no_change"] += 1
+                            else:
+                                skip_reasons["no_regions"] += 1
                         if on_image_done is not None:
                             on_image_done(item.file_name)
                     except Exception as e:
@@ -800,6 +879,7 @@ class EpubTranslator:
                             f"[yellow]Warning: Failed to process image '{item.file_name}': {e}[/yellow]"
                         )
                         errors += 1
+                        skip_reasons["error"] += 1
                     finally:
                         completed += 1
                         if progress is not None and task is not None:
@@ -818,6 +898,13 @@ class EpubTranslator:
         else:
             run_translate_core(None, None)
 
+        self._last_image_skip_reasons = dict(skip_reasons)
+        self._last_image_perf = {
+            "ocr_sec": round(float(perf.get("ocr_sec", 0.0)), 3),
+            "translate_sec": round(float(perf.get("translate_sec", 0.0)), 3),
+            "render_sec": round(float(perf.get("render_sec", 0.0)), 3),
+            "skip_reasons": dict(skip_reasons),
+        }
         return (processed, skipped, errors, total)
 
     @staticmethod
@@ -844,6 +931,7 @@ class EpubTranslator:
         source_lang: str,
         prefetch_state: Optional[Dict[str, int]] = None,
         prefetch_lock: Optional[threading.Lock] = None,
+        on_image_stage: Optional[Callable[[str, str], None]] = None,
     ) -> Dict[str, Any]:
         """Pre-scan OCR regions for images so OCR work can overlap chapter translation."""
         from ebooklib import epub
@@ -857,6 +945,7 @@ class EpubTranslator:
                 translator = ImageTranslator(
                     source_lang=source_lang,
                     target_lang=self.target_lang,
+                    render_quality=self.image_quality,
                 )
                 thread_state.image_translator = translator
             return translator
@@ -878,8 +967,13 @@ class EpubTranslator:
                 prefetch_state["completed"] = 0
 
         regions_by_file: Dict[str, Any] = {}
+        ocr_total = 0.0
+        cache_hits = 0
+        cache_misses = 0
+        perf_lock = threading.Lock()
 
         def detect_one(item):
+            nonlocal ocr_total, cache_hits, cache_misses
             translator = get_image_translator()
             image_bytes = item.get_content()
             image_hash = hashlib.sha256(image_bytes).hexdigest()
@@ -895,6 +989,8 @@ class EpubTranslator:
                     confidence_threshold=cache_key_threshold,
                 )
                 if cached is not None:
+                    with perf_lock:
+                        cache_hits += 1
                     regions = self._deserialize_regions(cached)
                     prepared = translator.prepare_regions_for_translation(regions)
                     serialized_prepared = self._serialize_regions(prepared)
@@ -911,9 +1007,16 @@ class EpubTranslator:
                     payload = {"regions": prepared}
                     if translations is not None:
                         payload["translations"] = translations
+                    if on_image_stage is not None:
+                        on_image_stage(item.file_name, "ocr_done")
                     return item.file_name, payload
 
+            detect_start = time.perf_counter()
             regions = translator.detect_regions(image_bytes, item.media_type)
+            detect_elapsed = time.perf_counter() - detect_start
+            with perf_lock:
+                ocr_total += detect_elapsed
+                cache_misses += 1
             prepared = translator.prepare_regions_for_translation(regions)
             serialized_prepared = self._serialize_regions(prepared)
 
@@ -938,7 +1041,11 @@ class EpubTranslator:
                 payload = {"regions": prepared}
                 if translations is not None:
                     payload["translations"] = translations
+                if on_image_stage is not None:
+                    on_image_stage(item.file_name, "ocr_done")
                 return item.file_name, payload
+            if on_image_stage is not None:
+                on_image_stage(item.file_name, "ocr_done")
             return item.file_name, {"regions": prepared}
 
         if self.image_threads > 1:
@@ -979,6 +1086,12 @@ class EpubTranslator:
                         with prefetch_lock:
                             prefetch_state["completed"] = prefetch_state.get("completed", 0) + 1
 
+        self._last_prefetch_perf = {
+            "ocr_detect_sec": round(float(ocr_total), 3),
+            "cache_hits": int(cache_hits),
+            "cache_misses": int(cache_misses),
+            "total_images": len(image_items),
+        }
         return regions_by_file
 
     @staticmethod
@@ -1103,6 +1216,82 @@ class EpubTranslator:
         for item in content_docs:
             item.add_link(href='style/cjk.css', rel='stylesheet', type='text/css')
 
+    def _build_translation_batches(
+        self,
+        texts: List[str],
+        max_batch_items: int = 40,
+        max_batch_chars: int = 4500,
+    ) -> List[List[str]]:
+        """Split translation payload into size-aware batches."""
+        batches: List[List[str]] = []
+        current: List[str] = []
+        current_chars = 0
+
+        for text in texts:
+            text_len = len(text)
+            if (
+                current
+                and (len(current) >= max_batch_items or (current_chars + text_len) > max_batch_chars)
+            ):
+                batches.append(current)
+                current = []
+                current_chars = 0
+            current.append(text)
+            current_chars += text_len
+
+        if current:
+            batches.append(current)
+        return batches
+
+    def _run_dry_run(self, book, content_docs, output_path: str) -> str:
+        """Analyze workload and exit without writing output."""
+        from ebooklib import epub
+
+        chapter_segments = 0
+        for item in content_docs:
+            try:
+                texts, _ = self.extractor.extract_texts(item.get_content())
+                chapter_segments += len([t for t in texts if t and t.strip()])
+            except Exception:
+                continue
+
+        image_total = 0
+        image_candidates = 0
+        prefetch_map = {}
+        if self.translate_images:
+            for item in book.get_items():
+                if isinstance(item, epub.EpubImage):
+                    image_total += 1
+            try:
+                prefetch_map = self._prefetch_image_regions(book, self.effective_source_lang)
+            except Exception:
+                prefetch_map = {}
+            image_candidates = sum(
+                1 for _, entry in prefetch_map.items()
+                if not self._prefetched_regions_empty(entry)
+            )
+
+        report = {
+            "dry_run": True,
+            "output_path": output_path,
+            "effective_source_lang": self.effective_source_lang,
+            "target_lang": self.target_lang,
+            "estimate": {
+                "chapters_total": len(content_docs),
+                "chapter_text_segments": chapter_segments,
+                "images_total": image_total,
+                "image_translate_candidates": image_candidates,
+                "image_skip_estimate": max(0, image_total - image_candidates),
+            },
+            "performance": {
+                "ocr_prescan": getattr(self, "_last_prefetch_perf", {}),
+            },
+        }
+        self._last_report = report
+        self.console.print("[cyan]Dry-run estimate:[/cyan] " + json.dumps(report["estimate"], ensure_ascii=False))
+        self.console.print("[green]✓ Dry-run complete (no output written).[/green]")
+        return output_path
+
     def _translate_texts_with_cache(self, texts: List[str]) -> List[str]:
         """Translate texts, using cache where available.
 
@@ -1144,11 +1333,14 @@ class EpubTranslator:
         # Translate uncached texts
         if texts_to_translate:
             try:
-                new_translations = self.service.translate(
-                    texts_to_translate,
-                    source_lang,
-                    self.target_lang
-                )
+                new_translations = []
+                for batch in self._build_translation_batches(texts_to_translate):
+                    out = self.service.translate(
+                        batch,
+                        source_lang,
+                        self.target_lang
+                    )
+                    new_translations.extend(out)
 
                 # Store in cache and fill results
                 if self.cache:

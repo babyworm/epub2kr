@@ -138,6 +138,7 @@ class TranslationCache:
             Cached translation if found, None otherwise
         """
         text_hash = self._hash_text(text)
+        service = self._namespaced_service(service)
 
         with self._lock:
             try:
@@ -184,6 +185,7 @@ class TranslationCache:
             service: Translation service name
         """
         text_hash = self._hash_text(text)
+        service = self._namespaced_service(service)
         timestamp = int(datetime.now().timestamp())
 
         with self._lock:
@@ -247,6 +249,7 @@ class TranslationCache:
         if not texts:
             return {}
 
+        service = self._namespaced_service(service)
         # Create hash to index mapping
         hash_to_indices = {}
         for i, text in enumerate(texts):
@@ -311,6 +314,7 @@ class TranslationCache:
         """
         if not pairs:
             return
+        service = self._namespaced_service(service)
 
         timestamp = int(datetime.now().timestamp())
 
@@ -382,6 +386,9 @@ class TranslationCache:
             except sqlite3.DatabaseError:
                 self._recreate_db()
 
+    def _namespaced_service(self, service: str) -> str:
+        return f"{service}::{self.CACHE_KEY_VERSION}"
+
     def prune(self, older_than_days: int) -> int:
         """Delete cached translations older than N days."""
         cutoff = int(datetime.now().timestamp()) - (older_than_days * 86400)
@@ -442,3 +449,4 @@ class TranslationCache:
                     'hits': self._hits,
                     'misses': self._misses
                 }
+    CACHE_KEY_VERSION = "v2"

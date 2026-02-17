@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 
 class OCRPrescanCache:
     """Thread-safe OCR pre-scan cache using SQLite backend."""
+    CACHE_KEY_VERSION = "v2"
 
     def __init__(self, cache_dir: str = ".epub2kr_cache"):
         if cache_dir.startswith(("/", "~")):
@@ -90,6 +91,7 @@ class OCRPrescanCache:
         media_type: str,
         confidence_threshold: float,
     ) -> Optional[List[Dict[str, Any]]]:
+        source_lang = self._namespaced_source_lang(source_lang)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -115,6 +117,7 @@ class OCRPrescanCache:
         confidence_threshold: float,
         regions: List[Dict[str, Any]],
     ) -> None:
+        source_lang = self._namespaced_source_lang(source_lang)
         payload = json.dumps(regions, ensure_ascii=False)
         ts = int(datetime.now().timestamp())
         with self._lock:
@@ -185,6 +188,8 @@ class OCRPrescanCache:
         confidence_threshold: float,
         regions_hash: str,
     ) -> Optional[List[str]]:
+        source_lang = self._namespaced_source_lang(source_lang)
+        service_name = self._namespaced_service_name(service_name)
         with self._lock:
             conn = self._get_connection()
             try:
@@ -225,6 +230,8 @@ class OCRPrescanCache:
         regions_hash: str,
         translations: List[str],
     ) -> None:
+        source_lang = self._namespaced_source_lang(source_lang)
+        service_name = self._namespaced_service_name(service_name)
         payload = json.dumps(list(translations), ensure_ascii=False)
         ts = int(datetime.now().timestamp())
         with self._lock:
@@ -252,3 +259,9 @@ class OCRPrescanCache:
                 conn.commit()
             finally:
                 conn.close()
+
+    def _namespaced_source_lang(self, source_lang: str) -> str:
+        return f"{source_lang}::{self.CACHE_KEY_VERSION}"
+
+    def _namespaced_service_name(self, service_name: str) -> str:
+        return f"{service_name}::{self.CACHE_KEY_VERSION}"

@@ -3,9 +3,10 @@ import io
 import re
 import subprocess
 import shutil
+import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -79,10 +80,12 @@ class ImageTranslator:
         source_lang: str = "auto",
         target_lang: str = "en",
         confidence_threshold: float = 0.3,
+        render_quality: str = "balanced",
     ):
         self.source_lang = source_lang
         self.target_lang = target_lang
         self.confidence_threshold = confidence_threshold
+        self.render_quality = render_quality
         self._reader = None
         self._font_path = None
 
@@ -98,6 +101,7 @@ class ImageTranslator:
         regions: Optional[List[OCRRegion]] = None,
         translations: Optional[List[str]] = None,
         on_translation: Optional[Callable[[List[OCRRegion], List[str]], None]] = None,
+        on_timing: Optional[Callable[[Dict[str, float]], None]] = None,
     ) -> Optional[bytes]:
         """Process an image: OCR detect text, translate, overlay.
 
@@ -129,8 +133,11 @@ class ImageTranslator:
 
         # Extract texts and translate
         source_texts = [r.text for r in regions]
+        translate_elapsed = 0.0
         if translations is None or len(translations) != len(source_texts):
+            translate_start = time.perf_counter()
             translations = translate_func(source_texts)
+            translate_elapsed = time.perf_counter() - translate_start
         if on_translation is not None:
             on_translation(regions, translations)
         draw_pairs = [
@@ -139,14 +146,18 @@ class ImageTranslator:
             if self._should_draw_translation(region.text, translation)
         ]
         if not draw_pairs:
+            if on_timing is not None:
+                on_timing({"translate_sec": translate_elapsed, "render_sec": 0.0})
             return None
 
         # Render translations over original
+        render_start = time.perf_counter()
         result = self._render_translations(
             img,
             [region for region, _ in draw_pairs],
             [translation for _, translation in draw_pairs],
         )
+        render_elapsed = time.perf_counter() - render_start
 
         # Encode back to original format
         output = io.BytesIO()
@@ -156,6 +167,8 @@ class ImageTranslator:
         result.save(output, format=fmt)
         data = output.getvalue()
         output.close()
+        if on_timing is not None:
+            on_timing({"translate_sec": translate_elapsed, "render_sec": render_elapsed})
         return data
 
     def detect_regions(self, image_bytes: bytes, media_type: str) -> List[OCRRegion]:
@@ -431,14 +444,55 @@ class ImageTranslator:
             final_font = ImageFont.load_default()
 
         final_text = self._wrap_text_to_width(text, final_font, max_width)
+        final_text = self._fit_text_to_height(final_text, final_font, max_width, max_height)
         if not final_text.strip():
             final_text = text
         return final_font, final_text
+
+    def _fit_text_to_height(
+        self,
+        text: str,
+        font: ImageFont.ImageFont,
+        max_width: int,
+        max_height: int,
+    ) -> str:
+        """Ensure wrapped text fits in region height; truncate last line if needed."""
+        wrapped = text
+        _, text_h = self._measure_multiline(font, wrapped)
+        if text_h <= max_height:
+            return wrapped
+
+        lines = wrapped.splitlines() or [wrapped]
+        if not lines:
+            return wrapped
+
+        while lines:
+            trial = "\n".join(lines)
+            _, h = self._measure_multiline(font, trial)
+            if h <= max_height:
+                return trial
+            if len(lines) > 1:
+                lines.pop()
+                continue
+
+            line = lines[0]
+            ellipsis = "..."
+            while line:
+                candidate = f"{line}{ellipsis}"
+                candidate_wrapped = self._wrap_text_to_width(candidate, font, max_width)
+                _, h2 = self._measure_multiline(font, candidate_wrapped)
+                if h2 <= max_height:
+                    return candidate_wrapped
+                line = line[:-1]
+            return ellipsis
+
+        return text
 
     def _measure_multiline(self, font: ImageFont.ImageFont, text: str) -> Tuple[int, int]:
         lines = text.splitlines() or [text]
         max_w = 0
         total_h = 0
+        line_spacing = 1 if self.render_quality == "fast" else (2 if self.render_quality == "balanced" else 3)
         for line in lines:
             bbox = font.getbbox(line if line else " ")
             w = bbox[2] - bbox[0]
@@ -447,7 +501,7 @@ class ImageTranslator:
             total_h += max(h, 1)
         # Small spacing between lines improves readability
         if len(lines) > 1:
-            total_h += (len(lines) - 1) * 2
+            total_h += (len(lines) - 1) * line_spacing
         return max_w, total_h
 
     def _wrap_text_to_width(self, text: str, font: ImageFont.ImageFont, max_width: int) -> str:

@@ -147,6 +147,8 @@ epub2kr-restyle book.ko.epub --gui
 | `--no-translate-images` | Disable image OCR translation | `false` |
 | `--images-only` | Run only image OCR/translation | `false` |
 | `--resume` | Resume from existing output | `false` |
+| `--dry-run` | Analyze workload only (no output write) | `false` |
+| `--image-quality` | Image render quality (`fast/balanced/quality`) | `balanced` |
 | `--verbose` | Verbose logs | `false` |
 | `--quiet` | Minimal logs | `false` |
 | `--log-json` | Print final report in JSON | `false` |
@@ -169,12 +171,12 @@ epub2kr-restyle book.ko.epub --gui
 Text translation cache:
 
 - Location: `~/.epub2kr/cache.db`
-- Key: `SHA-256(source_text) + source_lang + target_lang + service`
+- Key: `SHA-256(source_text) + source_lang + target_lang + service + cache_version`
 
 OCR pre-scan cache:
 
 - Location: `~/.epub2kr/ocr_cache.db`
-- Key: `SHA-256(image_bytes) + source_lang + media_type + confidence_threshold`
+- Key: `SHA-256(image_bytes) + source_lang + media_type + confidence_threshold + cache_version`
 - Helps skip repeated OCR work on re-runs
 
 Use `--no-cache` to disable both caches.
@@ -188,6 +190,8 @@ Additional cache commands:
 ## Reporting and Benchmark
 
 - At the end of each run, a performance summary is printed (`chapters/images/metadata/save/total`).
+- Image pipeline report includes OCR pre-scan time, image translation time, render time, and skip reasons.
+- `--dry-run` prints estimated chapter/image workload without creating output EPUB.
 - Use `--log-json` to print a machine-readable final report.
 - A lightweight benchmark smoke test exists at `tests/test_benchmark.py`.
 

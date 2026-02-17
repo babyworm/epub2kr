@@ -122,6 +122,18 @@ class TestTranslateTextsWithCache:
             assert translator._source_lang_locked is True
             mock_service.translate.assert_called_once_with(["這是中文內容"], "zh-tw", "en")
 
+    def test_translation_uses_dynamic_batches(self, mock_service):
+        """Long payload should be split into multiple translate() batches."""
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", use_cache=False)
+
+            texts = [("A" * 3000), ("B" * 3000), ("C" * 100)]
+            translator._translate_texts_with_cache(texts)
+
+            # Should split due to char budget in _build_translation_batches
+            assert mock_service.translate.call_count >= 2
+
 
 class TestSourceLanguageDetection:
     def test_detects_simplified_chinese_as_zh_cn(self):
@@ -575,3 +587,26 @@ class TestImagePrescanCache:
                 )
                 assert (processed, skipped, errors, total) == (0, 1, 0, 1)
                 mock_process.assert_not_called()
+
+    def test_image_report_has_skip_reasons_and_perf(self, mock_service, tmp_path):
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", source_lang="en", target_lang="ko", use_cache=False)
+
+            img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_item = epub.EpubImage(
+                uid="img1",
+                file_name="images/p1.png",
+                media_type="image/png",
+                content=buf.getvalue(),
+            )
+            book = MagicMock()
+            book.get_items.return_value = [img_item]
+
+            with patch("epub2kr.image_translator.ImageTranslator.process_image", return_value=None):
+                translator._translate_images(book, prefetched_regions={}, show_progress=False)
+
+            assert "no_regions" in translator._last_image_skip_reasons
+            assert "translate_sec" in translator._last_image_perf
