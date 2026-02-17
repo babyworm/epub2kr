@@ -14,6 +14,7 @@ from .config import load_config
 @click.option('-li', '--source-lang', default=None, help='Source language code')
 @click.option('-lo', '--target-lang', default=None, help='Target language code')
 @click.option('-t', '--threads', default=None, type=int, help='Number of threads')
+@click.option('-j', '--image-threads', default=None, type=int, help='Number of threads for image OCR/translation')
 @click.option('--no-cache', is_flag=True, help='Disable translation cache')
 @click.option('--bilingual', is_flag=True, default=None, help='Generate bilingual output')
 @click.option('--api-key', default=None, help='API key for translation service')
@@ -24,8 +25,9 @@ from .config import load_config
 @click.option('--font-family', default=None, help='CJK font family (auto-detect if not set)')
 @click.option('--heading-font', default=None, help='Heading font family (defaults to body font)')
 @click.option('--paragraph-spacing', default=None, help='Paragraph spacing (e.g. 0.5em, 1em)')
+@click.option('--no-translate-images', is_flag=True, help='Skip OCR translation of image text')
 @click.option('--setup', is_flag=True, help='Run interactive setup wizard')
-def main(input_file, output, service, source_lang, target_lang, threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, setup):
+def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
     \b
@@ -40,6 +42,7 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         epub2kr book.epub -s deepl -lo ja --api-key YOUR_KEY
         epub2kr book.epub -s ollama --model llama2 -lo ko
         epub2kr book.epub -s openai --model gpt-4 --api-key sk-xxx -lo es
+        epub2kr book.epub -j 4 -lo ko
         epub2kr book.epub --bilingual -lo zh
         epub2kr --setup
     """
@@ -68,6 +71,8 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         source_lang = source_lang or cfg["source_lang"]
         target_lang = target_lang or cfg["target_lang"]
         threads = threads or cfg["threads"]
+        if image_threads is None:
+            image_threads = cfg.get("image_threads")
 
         # Validate language codes
         source_lang = validate_lang_code(source_lang)
@@ -96,6 +101,7 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
             source_lang=source_lang,
             target_lang=target_lang,
             threads=threads,
+            image_threads=image_threads,
             use_cache=not no_cache,
             bilingual=bilingual,
             font_size=effective_font_size,
@@ -103,6 +109,7 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
             font_family=effective_font_family,
             heading_font_family=effective_heading_font,
             paragraph_spacing=effective_paragraph_spacing,
+            translate_images=not no_translate_images,
             **service_kwargs
         )
 
@@ -115,7 +122,12 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         console.print(f"  Input:  {input_file}")
         console.print(f"  Output: {output_path}")
         console.print(f"  Service: {service}")
-        console.print(f"  Language: {lang_label(source_lang)} → {lang_label(target_lang)}")
+        if source_lang == 'auto' and translator.effective_source_lang != 'auto':
+            source_display = f"auto (detected: {translator.effective_source_lang})"
+        else:
+            source_display = lang_label(source_lang)
+        console.print(f"  Language: {source_display} → {lang_label(target_lang)}")
+        console.print(f"  Threads: chapters={threads}, images={image_threads if image_threads is not None else threads}")
         console.print(f"  Cache: {'disabled' if no_cache else 'enabled'}")
         if bilingual:
             console.print(f"  Mode: Bilingual")
@@ -128,6 +140,9 @@ def main(input_file, output, service, source_lang, target_lang, threads, no_cach
         console.print()
         console.print("[bold green]✓ Done![/bold green]")
 
+    except KeyboardInterrupt:
+        console.print("[yellow]Cancelled by user.[/yellow]")
+        raise click.Abort()
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise click.Abort()

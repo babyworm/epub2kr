@@ -11,6 +11,7 @@ DEFAULTS = {
     "source_lang": "auto",
     "target_lang": "ko",
     "threads": 4,
+    "image_threads": None,  # None = use "threads"
     "model": None,
     "bilingual": False,
     "font_size": "0.95em",
@@ -77,6 +78,13 @@ def run_setup():
         default=str(current["threads"]),
     ))
 
+    image_threads_default = current.get("image_threads")
+    image_threads_input = Prompt.ask(
+        "Image OCR threads (leave empty to use chapter threads)",
+        default="" if image_threads_default is None else str(image_threads_default),
+    ).strip()
+    image_threads: Optional[int] = int(image_threads_input) if image_threads_input else None
+
     # Model (for OpenAI/Ollama)
     model = None
     if service in ("openai", "ollama"):
@@ -133,6 +141,7 @@ def run_setup():
         "source_lang": source_lang,
         "target_lang": target_lang,
         "threads": threads,
+        "image_threads": image_threads,
         "model": model,
         "bilingual": bilingual,
         "font_size": font_size,
@@ -148,5 +157,4 @@ def run_setup():
     for k, v in new_config.items():
         console.print(f"  {k}: {v}")
     console.print()
-
 

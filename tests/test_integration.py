@@ -1,4 +1,5 @@
 """Integration tests for CLI and end-to-end pipeline."""
+import io
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -6,9 +7,45 @@ from unittest.mock import patch, MagicMock
 import pytest
 from click.testing import CliRunner
 from ebooklib import epub
+from PIL import Image
 
 from epub2kr.cli import main
 from epub2kr.config import DEFAULTS
+
+
+def _make_chinese_image_epub(tmp_path: Path, body_text: str, filename: str = "zh_img.epub") -> Path:
+    """Create an EPUB with Chinese body text and one PNG image."""
+    book = epub.EpubBook()
+    book.set_identifier("zh-book-001")
+    book.set_title("ZH Book")
+    book.set_language("zh")
+    book.add_author("Test Author")
+
+    ch = epub.EpubHtml(title="Chapter 1", file_name="ch1.xhtml", lang="zh", uid="ch1")
+    xhtml = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        f'<p>{body_text}</p>'
+        '<img src="images/p1.png" alt="img"/>'
+        '</body></html>'
+    ).encode("utf-8")
+    ch.set_content(xhtml)
+    book.add_item(ch)
+
+    img = Image.new("RGB", (220, 220), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    image_item = epub.EpubImage(uid="img1", file_name="images/p1.png", media_type="image/png", content=buf.getvalue())
+    book.add_item(image_item)
+
+    book.toc = [epub.Link("ch1.xhtml", "Chapter 1", uid="ch1_link")]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav", "ch1"]
+
+    epub_path = tmp_path / filename
+    epub.write_epub(str(epub_path), book)
+    return epub_path
 
 
 @pytest.fixture
@@ -185,6 +222,40 @@ class TestCLI:
         assert result.exit_code == 0
         assert output_path.exists()
 
+    def test_image_threads_option(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """Test --image-threads option."""
+        runner = CliRunner()
+        output_path = tmp_path / "image_threaded.epub"
+
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            '-t', '2',
+            '--image-threads', '5',
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert 'chapters=2, images=5' in result.output
+
+    def test_image_threads_short_option_j(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """Test -j short option for image threads."""
+        runner = CliRunner()
+        output_path = tmp_path / "image_threaded_short.epub"
+
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            '-t', '2',
+            '-j', '4',
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert 'chapters=2, images=4' in result.output
+
 
 class TestEndToEnd:
     """Test end-to-end translation pipeline."""
@@ -216,6 +287,110 @@ class TestEndToEnd:
         lang = book.get_metadata('DC', 'language')
         assert lang
         assert lang[0][0] == 'ko'
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("这是中文内容", "zh-cn"),
+            ("這是中文內容", "zh-tw"),
+        ],
+    )
+    def test_auto_detected_source_is_used_for_ocr(self, text, expected, mock_config, mock_translator_service, tmp_path):
+        """Auto-detected source language should propagate to OCR and logs."""
+        runner = CliRunner()
+        input_epub = _make_chinese_image_epub(tmp_path, text, f"{expected}.epub")
+        output_path = tmp_path / f"out_{expected}.epub"
+        captured_ocr_source = []
+
+        def fake_get_reader(self):
+            captured_ocr_source.append(self.source_lang)
+            reader = MagicMock()
+            reader.readtext.return_value = []  # No OCR text, just verify language wiring
+            return reader
+
+        with patch("epub2kr.image_translator.ImageTranslator._get_reader", new=fake_get_reader):
+            result = runner.invoke(main, [
+                str(input_epub),
+                "-li", "auto",
+                "-lo", "ko",
+                "--no-cache",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert captured_ocr_source
+        assert all(lang == expected for lang in captured_ocr_source)
+        assert f"auto (detected: {expected})" in result.output
+        assert f"OCR source language: {expected}" in result.output
+
+    def test_ocr_skips_non_source_language_text_when_auto_detected(self, mock_config, mock_translator_service, tmp_path):
+        """After auto-detection to zh-cn, OCR should ignore non-Chinese text regions."""
+        runner = CliRunner()
+        input_epub = _make_chinese_image_epub(tmp_path, "这是中文内容", "zh_skip_non_source.epub")
+        output_path = tmp_path / "out_skip_non_source.epub"
+        translated_batches = []
+
+        def fake_get_reader(self):
+            reader = MagicMock()
+            reader.readtext.return_value = [
+                ([[10, 10], [100, 10], [100, 40], [10, 40]], "Hello", 0.95),
+                ([[10, 50], [140, 50], [140, 90], [10, 90]], "中文", 0.95),
+            ]
+            return reader
+
+        def capture_translate(texts, sl, tl):
+            translated_batches.append((list(texts), sl, tl))
+            return [f"[tr]{t}" for t in texts]
+
+        with patch("epub2kr.image_translator.ImageTranslator._get_reader", new=fake_get_reader), \
+             patch("epub2kr.translator.get_service") as mock_get_service:
+            svc = MagicMock()
+            svc.__class__.__name__ = "MockService"
+            svc.translate.side_effect = capture_translate
+            mock_get_service.return_value = svc
+
+            result = runner.invoke(main, [
+                str(input_epub),
+                "-li", "auto",
+                "-lo", "ko",
+                "--no-cache",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        # Ensure OCR translation call contains only source-language-matching text.
+        ocr_batches = [b for b in translated_batches if b[0] == ["中文"]]
+        assert ocr_batches
+        assert ocr_batches[0][1] == "zh-cn"
+
+    def test_prescan_summary_reports_skip_and_remaining(self, mock_config, mock_translator_service, tmp_path):
+        """Pre-scan summary should show skipped and remaining image counts."""
+        runner = CliRunner()
+        input_epub = _make_chinese_image_epub(tmp_path, "这是中文内容", "zh_prescan_summary.epub")
+        output_path = tmp_path / "out_prescan_summary.epub"
+
+        def fake_get_reader(self):
+            reader = MagicMock()
+            # English-only OCR text should be filtered out for zh-cn and become pre-scan skip.
+            reader.readtext.return_value = [
+                ([[10, 10], [100, 10], [100, 40], [10, 40]], "Hello", 0.95),
+            ]
+            return reader
+
+        with patch("epub2kr.image_translator.ImageTranslator._get_reader", new=fake_get_reader):
+            result = runner.invoke(main, [
+                str(input_epub),
+                "-li", "auto",
+                "-lo", "ko",
+                "--no-cache",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert "Image pre-scan summary: total=1, skipped=1, to_translate=0" in result.output
 
     def test_translated_epub_is_loadable(self, minimal_epub, mock_translator_service, tmp_path):
         """Test that translated EPUB can be loaded and read."""

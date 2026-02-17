@@ -1,5 +1,9 @@
 """Unit tests for EpubTranslator."""
+import io
 from unittest.mock import MagicMock, patch
+
+from ebooklib import epub
+from PIL import Image
 
 from epub2kr.translator import EpubTranslator, CJK_LANGS
 
@@ -93,6 +97,47 @@ class TestTranslateTextsWithCache:
 
             assert translations == []
             mock_service.translate.assert_not_called()
+
+    def test_uses_effective_source_lang_when_set(self, mock_service):
+        """Uses detected/overridden effective source language for translation."""
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", use_cache=False, source_lang="auto")
+            translator.effective_source_lang = "zh"
+            translator._source_lang_locked = True
+
+            translator._translate_texts_with_cache(["你好"])
+
+            mock_service.translate.assert_called_once_with(["你好"], "zh", "en")
+
+    def test_auto_source_lang_gets_locked_from_document_texts(self, mock_service):
+        """Auto source language should lock during text translation."""
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", use_cache=False, source_lang="auto")
+
+            translator._translate_texts_with_cache(["這是中文內容"])
+
+            assert translator.effective_source_lang == "zh-tw"
+            assert translator._source_lang_locked is True
+            mock_service.translate.assert_called_once_with(["這是中文內容"], "zh-tw", "en")
+
+
+class TestSourceLanguageDetection:
+    def test_detects_simplified_chinese_as_zh_cn(self):
+        assert EpubTranslator._detect_lang_from_text("这是中文内容") == "zh-cn"
+
+    def test_detects_traditional_chinese_as_zh_tw(self):
+        assert EpubTranslator._detect_lang_from_text("這是中文內容") == "zh-tw"
+
+    def test_detects_neutral_han_as_zh(self):
+        assert EpubTranslator._detect_lang_from_text("中文內容漢字") == "zh"
+
+    def test_detects_korean_from_hangul_text(self):
+        assert EpubTranslator._detect_lang_from_text("이것은 한국어 문장입니다") == "ko"
+
+    def test_detects_japanese_when_kana_present(self):
+        assert EpubTranslator._detect_lang_from_text("これは日本語のテキストです") == "ja"
 
 
 class TestTranslateDocument:
@@ -365,12 +410,23 @@ class TestInitialization:
 
             assert translator.source_lang == "auto"
             assert translator.target_lang == "en"
-            assert translator.threads == 1
+            assert translator.threads == 4
+            assert translator.image_threads == 4
             assert translator.cache is not None  # Cache enabled by default
+            assert translator.ocr_cache is not None
             assert translator.bilingual is False
             assert translator.font_size == "0.95em"
             assert translator.line_height == "1.8"
             assert translator.font_family is None
+
+    def test_image_threads_can_be_overridden(self, mock_service):
+        """Uses image_threads when explicitly provided."""
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(threads=2, image_threads=6)
+
+            assert translator.threads == 2
+            assert translator.image_threads == 6
 
     def test_initializes_without_cache(self, mock_service):
         """Initializes with cache disabled when use_cache=False."""
@@ -379,6 +435,7 @@ class TestInitialization:
             translator = EpubTranslator(use_cache=False)
 
             assert translator.cache is None
+            assert translator.ocr_cache is None
 
     def test_passes_service_kwargs(self, mock_service):
         """Passes service kwargs to get_service."""
@@ -396,3 +453,49 @@ class TestInitialization:
                 api_key="test-key",
                 custom_param="value"
             )
+
+
+class TestImagePrescanCache:
+    def test_prefetch_uses_persistent_ocr_cache(self, mock_service, tmp_path):
+        with patch('epub2kr.translator.get_service') as mock_get_service:
+            mock_get_service.return_value = mock_service
+            translator = EpubTranslator(service_name="google", source_lang="zh-cn", use_cache=True)
+
+            # isolate OCR cache per test
+            from epub2kr.ocr_cache import OCRPrescanCache
+            translator.ocr_cache = OCRPrescanCache(cache_dir=str(tmp_path / "ocr_cache"))
+
+            img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_item = epub.EpubImage(
+                uid="img1",
+                file_name="images/p1.png",
+                media_type="image/png",
+                content=buf.getvalue(),
+            )
+            book = MagicMock()
+            book.get_items.return_value = [img_item]
+
+            ocr_region = [
+                (
+                    [[10, 10], [100, 10], [100, 40], [10, 40]],
+                    "中文",
+                    0.95,
+                )
+            ]
+
+            with patch("epub2kr.image_translator.ImageTranslator._get_reader") as mock_get_reader:
+                mock_reader = MagicMock()
+                mock_reader.readtext.return_value = ocr_region
+                mock_get_reader.return_value = mock_reader
+
+                # First run: OCR executed and cached
+                out1 = translator._prefetch_image_regions(book, "zh-cn")
+                assert "images/p1.png" in out1
+                assert mock_reader.readtext.call_count == 1
+
+                # Second run: should hit OCR cache and skip OCR call
+                out2 = translator._prefetch_image_regions(book, "zh-cn")
+                assert "images/p1.png" in out2
+                assert mock_reader.readtext.call_count == 1
