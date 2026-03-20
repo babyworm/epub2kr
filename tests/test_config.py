@@ -5,7 +5,17 @@ from pathlib import Path
 import pytest
 
 import epub2kr.config as config_module
-from epub2kr.config import DEFAULTS, load_config, save_config
+from epub2kr.config import (
+    CODEX_DEFAULT_IMAGE_THREADS,
+    CODEX_MAX_THREADS,
+    DEFAULTS,
+    FALLBACK_SERVICE,
+    load_config,
+    recommended_codex_threads,
+    recommended_default_service,
+    resolve_thread_settings,
+    save_config,
+)
 
 
 @pytest.fixture
@@ -13,6 +23,7 @@ def temp_config_path(tmp_path, monkeypatch):
     """Mock CONFIG_PATH to use a temporary directory."""
     config_path = tmp_path / "config.json"
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(config_module.shutil, "which", lambda _: None)
     return config_path
 
 
@@ -21,6 +32,35 @@ def test_load_config_returns_defaults_when_no_file_exists(temp_config_path):
     assert not temp_config_path.exists()
     config = load_config()
     assert config == DEFAULTS
+
+
+def test_load_config_prefers_codex_when_cli_is_available(temp_config_path, monkeypatch):
+    """When Codex CLI exists and there is no saved config, default service should be codex."""
+    monkeypatch.setattr(config_module.shutil, "which", lambda _: "/usr/local/bin/codex")
+
+    config = load_config()
+
+    assert config["service"] == "codex"
+    assert config["target_lang"] == DEFAULTS["target_lang"]
+
+
+def test_recommended_default_service_falls_back_to_google(monkeypatch):
+    """Missing Codex CLI should keep Google as the fallback default."""
+    monkeypatch.setattr(config_module.shutil, "which", lambda _: None)
+
+    assert recommended_default_service() == FALLBACK_SERVICE
+
+
+def test_saved_service_overrides_detected_default(temp_config_path, monkeypatch):
+    """Explicit saved config should win even if Codex CLI is installed."""
+    monkeypatch.setattr(config_module.shutil, "which", lambda _: "/usr/local/bin/codex")
+    temp_config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(temp_config_path, "w") as f:
+        json.dump({"service": "google"}, f)
+
+    config = load_config()
+
+    assert config["service"] == "google"
 
 
 def test_load_config_merges_saved_values_with_defaults(temp_config_path):
@@ -180,3 +220,61 @@ def test_save_config_formats_json_with_indent(temp_config_path):
     # Check for indentation (indent=2)
     assert "  " in content  # Should have 2-space indentation
     assert content.count("\n") >= 3  # Multi-line output
+
+
+def test_recommended_codex_threads_caps_at_eight():
+    """Codex concurrency recommendation should cap at 8 workers."""
+    assert recommended_codex_threads(cpu_count=12) == CODEX_MAX_THREADS
+
+
+def test_recommended_codex_threads_uses_cpu_minus_one():
+    """Codex concurrency recommendation should use cpu_count - 1 below the cap."""
+    assert recommended_codex_threads(cpu_count=4) == 3
+    assert recommended_codex_threads(cpu_count=1) == 1
+
+
+def test_resolve_thread_settings_auto_tunes_codex_defaults():
+    """Codex should auto-tune chapter threads and keep image concurrency conservative."""
+    threads, image_threads, notes = resolve_thread_settings(
+        service="codex",
+        cli_threads=None,
+        cli_image_threads=None,
+        config=DEFAULTS.copy(),
+        cpu_count=12,
+    )
+
+    assert threads == CODEX_MAX_THREADS
+    assert image_threads == CODEX_DEFAULT_IMAGE_THREADS
+    assert notes["threads_auto"] is True
+    assert notes["image_threads_auto"] is True
+
+
+def test_resolve_thread_settings_caps_explicit_codex_threads():
+    """Explicit Codex thread counts above the cap should be reduced."""
+    threads, image_threads, notes = resolve_thread_settings(
+        service="codex",
+        cli_threads=32,
+        cli_image_threads=21,
+        config=DEFAULTS.copy(),
+        cpu_count=12,
+    )
+
+    assert threads == CODEX_MAX_THREADS
+    assert image_threads == CODEX_MAX_THREADS
+    assert notes["threads_capped"] is True
+    assert notes["image_threads_capped"] is True
+
+
+def test_resolve_thread_settings_leaves_non_codex_defaults_unchanged():
+    """Non-Codex services should preserve the existing global defaults."""
+    threads, image_threads, notes = resolve_thread_settings(
+        service="google",
+        cli_threads=None,
+        cli_image_threads=None,
+        config=DEFAULTS.copy(),
+        cpu_count=12,
+    )
+
+    assert threads == DEFAULTS["threads"]
+    assert image_threads == DEFAULTS["image_threads"]
+    assert notes == {}

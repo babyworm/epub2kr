@@ -1,13 +1,18 @@
 """Configuration management for epub2kr."""
 import json
+import os
+import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 CONFIG_PATH = Path.home() / ".epub2kr" / "config.json"
+FALLBACK_SERVICE = "google"
+CODEX_MAX_THREADS = 8
+CODEX_DEFAULT_IMAGE_THREADS = 1
 
 DEFAULTS = {
-    "service": "google",
+    "service": FALLBACK_SERVICE,
     "source_lang": "auto",
     "target_lang": "ko",
     "threads": 4,
@@ -25,9 +30,59 @@ DEFAULTS = {
 }
 
 
+def recommended_default_service() -> str:
+    """Prefer Codex when the CLI is installed, otherwise fall back to Google."""
+    codex_path = os.getenv("CODEX_CLI_PATH") or "codex"
+    return "codex" if shutil.which(codex_path) else FALLBACK_SERVICE
+
+
+def recommended_codex_threads(cpu_count: Optional[int] = None) -> int:
+    """Return a conservative Codex chapter concurrency recommendation."""
+    detected = cpu_count if cpu_count is not None else os.cpu_count()
+    if detected is None:
+        return DEFAULTS["threads"]
+    return max(1, min(CODEX_MAX_THREADS, detected - 1))
+
+
+def resolve_thread_settings(
+    service: str,
+    cli_threads: Optional[int],
+    cli_image_threads: Optional[int],
+    config: Dict[str, Any],
+    cpu_count: Optional[int] = None,
+) -> Tuple[int, Optional[int], Dict[str, Any]]:
+    """Resolve chapter/image thread counts with Codex-specific defaults."""
+    notes: Dict[str, Any] = {}
+
+    threads = cli_threads if cli_threads is not None else config["threads"]
+    image_threads = (
+        cli_image_threads if cli_image_threads is not None else config.get("image_threads")
+    )
+
+    if service == "codex":
+        if cli_threads is None and threads == DEFAULTS["threads"]:
+            threads = recommended_codex_threads(cpu_count)
+            notes["threads_auto"] = True
+
+        if threads > CODEX_MAX_THREADS:
+            threads = CODEX_MAX_THREADS
+            notes["threads_capped"] = True
+
+        if cli_image_threads is None and image_threads is None:
+            image_threads = CODEX_DEFAULT_IMAGE_THREADS
+            notes["image_threads_auto"] = True
+
+        if image_threads is not None and image_threads > CODEX_MAX_THREADS:
+            image_threads = CODEX_MAX_THREADS
+            notes["image_threads_capped"] = True
+
+    return threads, image_threads, notes
+
+
 def load_config() -> Dict[str, Any]:
     """Load saved configuration, merged with defaults."""
     config = DEFAULTS.copy()
+    config["service"] = recommended_default_service()
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH) as f:
@@ -76,14 +131,20 @@ def run_setup():
     )
 
     # Threads
+    thread_default = current["threads"]
+    if service == "codex" and thread_default == DEFAULTS["threads"]:
+        thread_default = recommended_codex_threads()
     threads = int(Prompt.ask(
         "Number of threads",
-        default=str(current["threads"]),
+        default=str(thread_default),
     ))
 
     image_threads_default = current.get("image_threads")
+    image_thread_prompt = "Image OCR threads (leave empty to use chapter threads)"
+    if service == "codex" and image_threads_default is None:
+        image_thread_prompt = "Image OCR threads (leave empty to use Codex default 1)"
     image_threads_input = Prompt.ask(
-        "Image OCR threads (leave empty to use chapter threads)",
+        image_thread_prompt,
         default="" if image_threads_default is None else str(image_threads_default),
     ).strip()
     image_threads: Optional[int] = int(image_threads_input) if image_threads_input else None

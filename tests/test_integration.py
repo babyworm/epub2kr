@@ -255,6 +255,60 @@ class TestCLI:
         assert call_args.kwargs['profile'] == 'translator'
         assert 'Reasoning: low' in result.output
 
+    def test_codex_auto_threads_use_cpu_minus_one_capped_at_eight(self, minimal_epub, mock_config, tmp_path):
+        """Codex should auto-tune chapter threads and keep image concurrency conservative."""
+        runner = CliRunner()
+        output_path = tmp_path / "codex_auto.epub"
+
+        with patch("epub2kr.config.os.cpu_count", return_value=12), \
+             patch("epub2kr.cli.EpubTranslator") as mock_translator_cls:
+            translator = MagicMock()
+            translator.translate_epub.return_value = str(output_path)
+            translator.effective_source_lang = "en"
+            translator.get_last_report.return_value = {}
+            mock_translator_cls.return_value = translator
+
+            result = runner.invoke(main, [
+                str(minimal_epub),
+                "-s", "codex",
+                "-lo", "ko",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        kwargs = mock_translator_cls.call_args.kwargs
+        assert kwargs["threads"] == 8
+        assert kwargs["image_threads"] == 1
+        assert "Codex chapter concurrency:" in result.output
+        assert "Threads: chapters=8, images=1" in result.output
+
+    def test_codex_thread_cap_applies_to_explicit_values(self, minimal_epub, mock_config, tmp_path):
+        """Codex thread caps should also apply to explicit CLI values."""
+        runner = CliRunner()
+        output_path = tmp_path / "codex_cap.epub"
+
+        with patch("epub2kr.cli.EpubTranslator") as mock_translator_cls:
+            translator = MagicMock()
+            translator.translate_epub.return_value = str(output_path)
+            translator.effective_source_lang = "en"
+            translator.get_last_report.return_value = {}
+            mock_translator_cls.return_value = translator
+
+            result = runner.invoke(main, [
+                str(minimal_epub),
+                "-s", "codex",
+                "-t", "20",
+                "-j", "99",
+                "-lo", "ko",
+                "-o", str(output_path),
+            ])
+
+        assert result.exit_code == 0
+        kwargs = mock_translator_cls.call_args.kwargs
+        assert kwargs["threads"] == 8
+        assert kwargs["image_threads"] == 8
+        assert "capped at 8" in result.output
+
     def test_threads_option(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
         """Test -t/--threads option."""
         runner = CliRunner()

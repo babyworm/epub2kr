@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "epub2kr"
-version = "0.1.1"
+version = "0.1.2"
 description = "EPUB translation tool with layout preservation"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"

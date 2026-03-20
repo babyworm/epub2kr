@@ -5,7 +5,7 @@ from rich.console import Console
 from pathlib import Path
 
 from .translator import EpubTranslator, lang_label, validate_lang_code, CJK_LANGS, CJK_FONT_STACKS
-from .config import load_config
+from .config import load_config, resolve_thread_settings
 from .cache import TranslationCache
 from .ocr_cache import OCRPrescanCache
 
@@ -107,15 +107,33 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
         service = service or cfg["service"]
         source_lang = source_lang or cfg["source_lang"]
         target_lang = target_lang or cfg["target_lang"]
-        threads = threads or cfg["threads"]
-        if image_threads is None:
-            image_threads = cfg.get("image_threads")
+        threads, image_threads, thread_notes = resolve_thread_settings(
+            service=service,
+            cli_threads=threads,
+            cli_image_threads=image_threads,
+            config=cfg,
+        )
 
         # Validate language codes
         source_lang = validate_lang_code(source_lang)
         target_lang = validate_lang_code(target_lang)
         if bilingual is None:
             bilingual = cfg["bilingual"]
+
+        if service == "codex":
+            if thread_notes.get("threads_auto"):
+                console.print(
+                    f"[cyan]Codex chapter concurrency:[/cyan] auto={threads} "
+                    f"(min(8, cpu_count-1))"
+                )
+            if thread_notes.get("threads_capped"):
+                console.print(f"[yellow]Codex chapter concurrency capped at {threads}.[/yellow]")
+            if thread_notes.get("image_threads_auto"):
+                console.print(
+                    f"[cyan]Codex image concurrency:[/cyan] default={image_threads}"
+                )
+            if thread_notes.get("image_threads_capped"):
+                console.print(f"[yellow]Codex image concurrency capped at {image_threads}.[/yellow]")
 
         # Build service kwargs from options
         service_kwargs = {}
