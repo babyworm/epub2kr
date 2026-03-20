@@ -13,6 +13,9 @@ DEFAULTS = {
     "threads": 4,
     "image_threads": None,  # None = use "threads"
     "model": None,
+    "reasoning_effort": None,
+    "codex_cli_path": None,
+    "codex_profile": None,
     "bilingual": False,
     "font_size": "0.95em",
     "line_height": "1.8",
@@ -56,7 +59,7 @@ def run_setup():
     # Service
     service = Prompt.ask(
         "Translation service",
-        choices=["google", "deepl", "openai", "ollama"],
+        choices=["google", "deepl", "openai", "ollama", "codex"],
         default=current["service"],
     )
 
@@ -85,9 +88,10 @@ def run_setup():
     ).strip()
     image_threads: Optional[int] = int(image_threads_input) if image_threads_input else None
 
-    # Model (for OpenAI/Ollama)
+    # Model / reasoning controls
     model = None
-    if service in ("openai", "ollama"):
+    reasoning_effort = None
+    if service in ("openai", "ollama", "codex"):
         default_model = current.get("model") or ""
         model_input = Prompt.ask(
             f"Model (for {service})",
@@ -95,6 +99,11 @@ def run_setup():
         )
         if model_input:
             model = model_input
+    if service == "codex":
+        reasoning_effort = Prompt.ask(
+            "Reasoning effort (minimal/low/medium/high/xhigh)",
+            default=current.get("reasoning_effort") or "low",
+        ).strip().lower()
 
     # Bilingual
     bilingual = Confirm.ask(
@@ -143,6 +152,9 @@ def run_setup():
         "threads": threads,
         "image_threads": image_threads,
         "model": model,
+        "reasoning_effort": reasoning_effort,
+        "codex_cli_path": current.get("codex_cli_path"),
+        "codex_profile": current.get("codex_profile"),
         "bilingual": bilingual,
         "font_size": font_size,
         "line_height": line_height,
@@ -157,4 +169,3 @@ def run_setup():
     for k, v in new_config.items():
         console.print(f"  {k}: {v}")
     console.print()
-

@@ -5,7 +5,7 @@ EPUB 파일을 레이아웃을 보존하면서 번역하는 CLI 도구입니다.
 ## 특징
 
 - HTML/CSS 레이아웃을 완벽히 보존하면서 EPUB 번역
-- 4가지 번역 서비스 지원: Google Translate (기본, 무료), DeepL, OpenAI, Ollama
+- 5가지 번역 서비스 지원: Google Translate (기본, 무료), DeepL, OpenAI, Ollama, Codex CLI
 - 이미지 내 텍스트 OCR 번역 지원 (PNG/JPEG)
 - `auto` 소스 언어 감지 후 실제 감지 언어를 파이프라인 전체(본문/메타/TOC/OCR)에 일관 적용
 - 이미지 pre-scan(OCR 선탐색) + 병렬 처리 + 선제 skip으로 대용량 EPUB 처리 속도 개선
@@ -67,6 +67,9 @@ epub2kr book.epub -s openai --api-key sk-xxx --model gpt-4 -lo es
 
 # Ollama (로컬 LLM)
 epub2kr book.epub -s ollama --model llama2 -lo ko
+
+# Codex CLI (ChatGPT 로그인 또는 CODEX_API_KEY 필요)
+epub2kr book.epub -s codex --model gpt-5.4 --reasoning-effort low -lo ko
 
 # OpenAI 호환 API (커스텀 엔드포인트)
 epub2kr book.epub -s openai --base-url http://localhost:8000/v1 --api-key dummy -lo zh
@@ -166,7 +169,7 @@ epub2kr-restyle book.ko.epub --gui
 |------|------|--------|
 | `INPUT_FILE` | 입력 EPUB 파일 경로 (필수) | - |
 | `-o, --output` | 출력 파일 경로 | `{입력파일명}.{대상언어}.epub` |
-| `-s, --service` | 번역 서비스 (`google`, `deepl`, `openai`, `ollama`) | `google` |
+| `-s, --service` | 번역 서비스 (`google`, `deepl`, `openai`, `ollama`, `codex`) | `google` |
 | `-li, --source-lang` | 소스 언어 코드 | `auto` |
 | `-lo, --target-lang` | 대상 언어 코드 | `en` |
 | `-t, --threads` | 병렬 스레드 수 | `4` |
@@ -185,7 +188,10 @@ epub2kr-restyle book.ko.epub --gui
 | `--cache-prune-days` | N일 이전 캐시 정리 후 종료 | - |
 | `--bilingual` | 바이링구얼 출력 생성 | `false` |
 | `--api-key` | 번역 서비스 API 키 | - |
-| `--model` | 모델 이름 (OpenAI/Ollama용) | - |
+| `--model` | 모델 이름 (OpenAI/Ollama/Codex용) | - |
+| `--reasoning-effort` | Codex reasoning effort (`minimal/low/medium/high/xhigh`) | - |
+| `--codex-cli-path` | Codex CLI 실행 파일 경로 | - |
+| `--codex-profile` | Codex CLI config profile | - |
 | `--base-url` | 커스텀 API 베이스 URL | - |
 | `--font-size` | CJK 폰트 크기 (예: `0.95em`, `14px`) | `0.95em` |
 | `--line-height` | CJK 줄간 (예: `1.8`, `2.0`) | `1.8` |
@@ -202,6 +208,7 @@ epub2kr-restyle book.ko.epub --gui
 | DeepL | API 키 | 유료/무료 티어 | 고품질 번역, `DEEPL_API_KEY` 환경변수 사용 가능 |
 | OpenAI | API 키 | 유료 | GPT 모델 기반, `OPENAI_API_KEY` 환경변수 사용 가능 |
 | Ollama | 불필요 | 무료 | 로컬 LLM, `localhost:11434`에서 Ollama 실행 필요 |
+| Codex CLI | ChatGPT 로그인 또는 API 키 | 사용 환경에 따름 | `codex exec`를 호출해 구조화된 번역 결과를 수집, `CODEX_API_KEY` 또는 기존 `codex login` 세션 사용 가능 |
 
 ## CJK 폰트 최적화
 
@@ -295,7 +302,8 @@ src/epub2kr/
     ├── google.py        # Google Translate (무료 웹 API)
     ├── deepl.py         # DeepL API
     ├── openai_service.py # OpenAI API
-    └── ollama.py        # Ollama (로컬 LLM)
+    ├── ollama.py        # Ollama (로컬 LLM)
+    └── codex_cli.py     # Codex CLI 비대화형 번역
 ```
 
 ## 라이선스

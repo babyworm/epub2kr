@@ -229,6 +229,32 @@ class TestCLI:
         call_args = mock_translator_service.call_args
         assert call_args[0][0] == 'deepl' or 'deepl' in str(call_args)
 
+    def test_codex_service_forwards_model_and_reasoning(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
+        """Codex-specific CLI flags should be passed into the service factory."""
+        runner = CliRunner()
+        output_path = tmp_path / "codex.epub"
+
+        result = runner.invoke(main, [
+            str(minimal_epub),
+            '-s', 'codex',
+            '--model', 'gpt-5.4',
+            '--reasoning-effort', 'low',
+            '--codex-cli-path', '/usr/local/bin/codex',
+            '--codex-profile', 'translator',
+            '-lo', 'ko',
+            '-o', str(output_path)
+        ])
+
+        assert result.exit_code == 0
+        assert output_path.exists()
+        call_args = mock_translator_service.call_args
+        assert call_args.args[0] == 'codex'
+        assert call_args.kwargs['model'] == 'gpt-5.4'
+        assert call_args.kwargs['reasoning_effort'] == 'low'
+        assert call_args.kwargs['cli_path'] == '/usr/local/bin/codex'
+        assert call_args.kwargs['profile'] == 'translator'
+        assert 'Reasoning: low' in result.output
+
     def test_threads_option(self, minimal_epub, mock_config, mock_translator_service, tmp_path):
         """Test -t/--threads option."""
         runner = CliRunner()

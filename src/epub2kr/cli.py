@@ -13,7 +13,7 @@ from .ocr_cache import OCRPrescanCache
 @click.command(context_settings=dict(help_option_names=['-h', '--help']))
 @click.argument('input_file', type=click.Path(exists=True), required=False, default=None)
 @click.option('-o', '--output', type=click.Path(), default=None, help='Output file path')
-@click.option('-s', '--service', type=click.Choice(['google', 'deepl', 'openai', 'ollama']), default=None, help='Translation service')
+@click.option('-s', '--service', type=click.Choice(['google', 'deepl', 'openai', 'ollama', 'codex']), default=None, help='Translation service')
 @click.option('-li', '--source-lang', default=None, help='Source language code')
 @click.option('-lo', '--target-lang', default=None, help='Target language code')
 @click.option('-t', '--threads', default=None, type=int, help='Number of threads')
@@ -21,7 +21,10 @@ from .ocr_cache import OCRPrescanCache
 @click.option('--no-cache', is_flag=True, help='Disable translation cache')
 @click.option('--bilingual', is_flag=True, default=None, help='Generate bilingual output')
 @click.option('--api-key', default=None, help='API key for translation service')
-@click.option('--model', default=None, help='Model name (for OpenAI/Ollama)')
+@click.option('--model', default=None, help='Model name (for OpenAI/Ollama/Codex)')
+@click.option('--reasoning-effort', type=click.Choice(['minimal', 'low', 'medium', 'high', 'xhigh']), default=None, help='Reasoning effort for Codex')
+@click.option('--codex-cli-path', default=None, help='Path to codex CLI executable')
+@click.option('--codex-profile', default=None, help='Codex config profile to use')
 @click.option('--base-url', default=None, help='Custom API base URL')
 @click.option('--font-size', default=None, help='CJK font size (e.g. 0.95em, 14px)')
 @click.option('--line-height', default=None, help='CJK line height (e.g. 1.8, 2.0)')
@@ -40,7 +43,7 @@ from .ocr_cache import OCRPrescanCache
 @click.option('--cache-clear', is_flag=True, help='Clear translation/OCR caches and exit')
 @click.option('--cache-prune-days', default=None, type=int, help='Prune cache entries older than N days and exit')
 @click.option('--setup', is_flag=True, help='Run interactive setup wizard')
-def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, images_only, resume, dry_run, image_quality, verbose, quiet, log_json, cache_stats, cache_clear, cache_prune_days, setup):
+def main(input_file, output, service, source_lang, target_lang, threads, image_threads, no_cache, bilingual, api_key, model, reasoning_effort, codex_cli_path, codex_profile, base_url, font_size, line_height, font_family, heading_font, paragraph_spacing, no_translate_images, images_only, resume, dry_run, image_quality, verbose, quiet, log_json, cache_stats, cache_clear, cache_prune_days, setup):
     """epub2kr - Translate EPUB files while preserving layout.
 
     \b
@@ -55,6 +58,7 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
         epub2kr book.epub -s deepl -lo ja --api-key YOUR_KEY
         epub2kr book.epub -s ollama --model llama2 -lo ko
         epub2kr book.epub -s openai --model gpt-4 --api-key sk-xxx -lo es
+        epub2kr book.epub -s codex --model gpt-5.4 --reasoning-effort low -lo ko
         epub2kr book.epub -j 4 -lo ko
         epub2kr book.epub --bilingual -lo zh
         epub2kr --setup
@@ -115,12 +119,29 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
 
         # Build service kwargs from options
         service_kwargs = {}
-        if api_key:
+        effective_reasoning_effort = reasoning_effort or cfg.get("reasoning_effort")
+        effective_codex_cli_path = codex_cli_path or cfg.get("codex_cli_path")
+        effective_codex_profile = codex_profile or cfg.get("codex_profile")
+        effective_model = model or cfg.get("model")
+        if service == "codex":
+            effective_model = effective_model or "gpt-5.4"
+            effective_reasoning_effort = effective_reasoning_effort or "low"
+
+        if service in {"deepl", "openai", "codex"} and api_key:
             service_kwargs['api_key'] = api_key
-        if model or cfg.get("model"):
-            service_kwargs['model'] = model or cfg["model"]
-        if base_url:
+        if service in {"openai", "ollama", "codex"} and effective_model:
+            service_kwargs['model'] = effective_model
+        if service == "openai" and base_url:
             service_kwargs['base_url'] = base_url
+        if service == "ollama" and base_url:
+            service_kwargs['base_url'] = base_url
+        if service == "codex":
+            if effective_reasoning_effort:
+                service_kwargs['reasoning_effort'] = effective_reasoning_effort
+            if effective_codex_cli_path:
+                service_kwargs['cli_path'] = effective_codex_cli_path
+            if effective_codex_profile:
+                service_kwargs['profile'] = effective_codex_profile
         # CJK font settings from CLI or config
         effective_font_size = font_size or cfg.get("font_size", "0.95em")
         effective_line_height = line_height or cfg.get("line_height", "1.8")
@@ -161,6 +182,10 @@ def main(input_file, output, service, source_lang, target_lang, threads, image_t
         console.print(f"  Input:  {input_file}")
         console.print(f"  Output: {output_path}")
         console.print(f"  Service: {service}")
+        if service in {"openai", "ollama", "codex"} and effective_model:
+            console.print(f"  Model: {effective_model}")
+        if service == "codex" and effective_reasoning_effort:
+            console.print(f"  Reasoning: {effective_reasoning_effort}")
         if source_lang == 'auto' and translator.effective_source_lang != 'auto':
             source_display = f"auto (detected: {translator.effective_source_lang})"
         else:

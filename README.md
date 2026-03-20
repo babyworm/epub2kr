@@ -7,7 +7,7 @@ For the Korean documentation, see `README_kr.md`.
 ## Features
 
 - Preserves original HTML/CSS EPUB layout during translation
-- Supports 4 translation backends: Google Translate, DeepL, OpenAI, Ollama
+- Supports 5 translation backends: Google Translate, DeepL, OpenAI, Ollama, Codex CLI
 - OCR translation for text inside images (PNG/JPEG)
 - Auto source-language detection with consistent use across body/metadata/TOC/OCR
 - Parallel chapter translation and parallel image OCR/translation
@@ -63,6 +63,9 @@ epub2kr book.epub -s openai --api-key sk-xxx --model gpt-4 -lo es
 
 # Ollama (local)
 epub2kr book.epub -s ollama --model llama2 -lo ko
+
+# Codex CLI
+epub2kr book.epub -s codex --model gpt-5.4 --reasoning-effort low -lo ko
 
 # OpenAI-compatible endpoint
 epub2kr book.epub -s openai --base-url http://localhost:8000/v1 --api-key dummy -lo zh
@@ -138,7 +141,7 @@ epub2kr-restyle book.ko.epub --gui
 |---|---|---|
 | `INPUT_FILE` | Input EPUB path | - |
 | `-o, --output` | Output EPUB path | `{input}.{target}.epub` |
-| `-s, --service` | `google`, `deepl`, `openai`, `ollama` | `google` |
+| `-s, --service` | `google`, `deepl`, `openai`, `ollama`, `codex` | `google` |
 | `-li, --source-lang` | Source language | `auto` |
 | `-lo, --target-lang` | Target language | `en` |
 | `-t, --threads` | Chapter translation threads | `4` |
@@ -157,7 +160,10 @@ epub2kr-restyle book.ko.epub --gui
 | `--cache-prune-days` | Prune cache entries older than N days and exit | - |
 | `--bilingual` | Output original + translation | `false` |
 | `--api-key` | API key for selected service | - |
-| `--model` | Model for OpenAI/Ollama | - |
+| `--model` | Model for OpenAI/Ollama/Codex | - |
+| `--reasoning-effort` | Codex reasoning effort | - |
+| `--codex-cli-path` | Path to the Codex CLI executable | - |
+| `--codex-profile` | Codex config profile | - |
 | `--base-url` | Custom API base URL | - |
 | `--font-size` | CJK font size | `0.95em` |
 | `--line-height` | CJK line height | `1.8` |
@@ -209,6 +215,7 @@ src/epub2kr/
 ├── restyle.py
 ├── gui.py
 └── services/
+    ├── codex_cli.py
 ```
 
 ## License

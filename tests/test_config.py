@@ -70,6 +70,9 @@ def test_save_then_load_config_round_trip(temp_config_path):
         "target_lang": "ko",
         "threads": 10,
         "model": "gpt-4",
+        "reasoning_effort": "low",
+        "codex_cli_path": "/usr/local/bin/codex",
+        "codex_profile": "translator",
         "bilingual": True,
         "font_size": "1.0em",
         "line_height": "2.0",
@@ -126,6 +129,7 @@ def test_saved_config_overrides_defaults(temp_config_path):
     assert config["font_size"] == DEFAULTS["font_size"]
     assert config["line_height"] == DEFAULTS["line_height"]
     assert config["font_family"] == DEFAULTS["font_family"]
+    assert config["reasoning_effort"] == DEFAULTS["reasoning_effort"]
 
 
 def test_load_config_handles_oserror_gracefully(temp_config_path, monkeypatch):

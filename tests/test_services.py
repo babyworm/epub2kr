@@ -1,4 +1,6 @@
 """Unit tests for translation services."""
+import subprocess
+from pathlib import Path
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import json
@@ -10,6 +12,7 @@ from epub2kr.services import (
     DeepLService,
     OpenAIService,
     OllamaService,
+    CodexCLIService,
 )
 
 
@@ -32,13 +35,22 @@ class TestServiceFactory:
         assert 'deepl' in str(exc_info.value)
 
     def test_list_services_returns_all_services(self):
-        """Test that list_services returns all 4 services."""
+        """Test that list_services returns all 5 services."""
         services = list_services()
-        assert len(services) == 4
+        assert len(services) == 5
         assert 'google' in services
         assert 'deepl' in services
         assert 'openai' in services
         assert 'ollama' in services
+        assert 'codex' in services
+
+    def test_get_service_codex_without_args(self):
+        """Test that get_service('codex') works when CLI is installed."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = get_service("codex")
+
+        assert isinstance(service, CodexCLIService)
+        assert service.name() == "codex"
 
 
 class TestGoogleTranslateService:
@@ -413,3 +425,100 @@ class TestOllamaService:
         assert service._format_language_name('zh-cn') == 'Simplified Chinese'
         assert service._format_language_name('ko') == 'Korean'
         assert service._format_language_name('unknown') == 'UNKNOWN'
+
+
+class TestCodexCLIService:
+    """Tests for Codex CLI translation service."""
+
+    def test_init_requires_installed_cli(self):
+        """Initialization should fail when Codex CLI cannot be resolved."""
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(ValueError) as exc_info:
+                CodexCLIService()
+
+        assert "Codex CLI not found" in str(exc_info.value)
+
+    def test_invalid_reasoning_effort_raises_valueerror(self):
+        """Unsupported reasoning effort values should be rejected."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            with pytest.raises(ValueError) as exc_info:
+                CodexCLIService(reasoning_effort="turbo")
+
+        assert "Invalid Codex reasoning effort" in str(exc_info.value)
+
+    def test_translate_empty_list(self):
+        """Translating an empty list should short-circuit."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = CodexCLIService()
+
+        assert service.translate([], "en", "ko") == []
+
+    def test_translate_whitespace_only(self):
+        """Whitespace-only strings are returned untouched."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = CodexCLIService()
+
+        with patch.object(service, "_translate_batch") as mock_translate:
+            result = service.translate(["  ", "\n"], "en", "ko")
+
+        mock_translate.assert_not_called()
+        assert result == ["  ", "\n"]
+
+    def test_translate_uses_codex_exec_and_structured_output(self):
+        """Service should invoke `codex exec` once for the batch and parse JSON output."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = CodexCLIService(model="gpt-5.4", reasoning_effort="low")
+
+        def fake_run(cmd, input, text, capture_output, timeout, env):
+            assert cmd[0] == "/usr/local/bin/codex"
+            assert cmd[1] == "exec"
+            assert "-m" in cmd
+            assert "gpt-5.4" in cmd
+            assert '--output-schema' in cmd
+            assert '-o' in cmd
+            assert any('model_reasoning_effort="low"' == part for part in cmd)
+            assert any('approval_policy="never"' == part for part in cmd)
+            assert "Translate every item from English to Korean." in input
+            output_path = Path(cmd[cmd.index("-o") + 1])
+            schema_path = Path(cmd[cmd.index("--output-schema") + 1])
+            assert schema_path.exists()
+            output_path.write_text(
+                json.dumps({"translations": ["안녕하세요", "세계"]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            result = service.translate(["Hello", "World"], "en", "ko")
+
+        mock_run.assert_called_once()
+        assert result == ["안녕하세요", "세계"]
+
+    def test_translate_sets_codex_api_key_env(self):
+        """Explicit API key should be forwarded as `CODEX_API_KEY`."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = CodexCLIService(api_key="codex-key")
+
+        def fake_run(cmd, input, text, capture_output, timeout, env):
+            assert env["CODEX_API_KEY"] == "codex-key"
+            output_path = Path(cmd[cmd.index("-o") + 1])
+            output_path.write_text(
+                json.dumps({"translations": ["번역"]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            result = service.translate(["text"], "en", "ko")
+
+        assert result == ["번역"]
+
+    def test_translate_error_returns_original(self):
+        """Subprocess failures should fall back to the original text."""
+        with patch("shutil.which", return_value="/usr/local/bin/codex"):
+            service = CodexCLIService()
+
+        with patch("subprocess.run", side_effect=RuntimeError("boom")):
+            result = service.translate(["Hello"], "en", "ko")
+
+        assert result == ["Hello"]

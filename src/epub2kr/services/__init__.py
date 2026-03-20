@@ -6,6 +6,7 @@ from .google import GoogleTranslateService
 from .deepl import DeepLService
 from .openai_service import OpenAIService
 from .ollama import OllamaService
+from .codex_cli import CodexCLIService
 
 
 # Service registry
@@ -14,6 +15,7 @@ _SERVICES: Dict[str, Type[BaseTranslationService]] = {
     'deepl': DeepLService,
     'openai': OpenAIService,
     'ollama': OllamaService,
+    'codex': CodexCLIService,
 }
 
 
@@ -21,7 +23,7 @@ def get_service(name: str, **kwargs) -> BaseTranslationService:
     """Factory to create translation service by name.
 
     Args:
-        name: Service name ('google', 'deepl', 'openai', 'ollama')
+        name: Service name ('google', 'deepl', 'openai', 'ollama', 'codex')
         **kwargs: Service-specific initialization parameters
 
     Returns:
@@ -47,6 +49,9 @@ def get_service(name: str, **kwargs) -> BaseTranslationService:
 
         >>> # Ollama with specific model
         >>> service = get_service('ollama', model='llama2')
+
+        >>> # Codex CLI with low reasoning effort
+        >>> service = get_service('codex', model='gpt-5.4', reasoning_effort='low')
     """
     name_lower = name.lower()
 
@@ -75,6 +80,7 @@ __all__ = [
     'DeepLService',
     'OpenAIService',
     'OllamaService',
+    'CodexCLIService',
     'get_service',
     'list_services',
 ]
